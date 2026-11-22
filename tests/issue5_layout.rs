@@ -17,6 +17,7 @@ fn scratch_file(name: &str, source: &str) -> PathBuf {
 fn diagnostics(source: &str) -> String {
     let file = scratch_file("layout", source);
     let text = stylecop_rs::report(&file);
+    fs::remove_dir_all(file.parent().unwrap()).unwrap();
     let path = file.display().to_string();
     text.lines()
         .filter(|line| line.starts_with(&path))
@@ -183,4 +184,107 @@ fn one_line_catch_blocks_are_statements() {
             "(75,63): warning SA1501: Statement should not be on a single line",
         ]
     );
+}
+
+fn rule_diagnostics(source: &str, rule: &str) -> Vec<String> {
+    let marker = format!(": warning {rule}:");
+    diagnostics(source)
+        .lines()
+        .filter_map(|line| {
+            line.split_once(&marker)
+                .map(|(location, _)| location.to_owned())
+        })
+        .collect()
+}
+
+#[test]
+fn multiple_blank_lines_are_reported_on_both_sides_of_trivia() {
+    let source = r#"class C
+{
+    void M()
+    {
+
+
+        // Comment
+
+
+        M();
+    }
+
+    int P => 1;
+    #region Members
+
+
+    int Q => 2;
+    #endregion
+}
+"#;
+    assert_eq!(
+        rule_diagnostics(source, "SA1507"),
+        ["(5,1)", "(8,1)", "(15,1)"]
+    );
+}
+
+#[test]
+fn directives_followed_by_blank_lines_separate_members() {
+    let source = r#"class C
+{
+    #region Properties
+    int P => 1;
+    #endregion
+
+    int Q => 2;
+#pragma warning restore CS0618
+
+    int R => 3;
+    #region More
+    int S => 4;
+    #endregion
+}
+"#;
+    assert_eq!(rule_diagnostics(source, "SA1516"), ["(11,1)"]);
+}
+
+#[test]
+fn compilation_unit_attributes_need_blank_lines_between_declaration_groups() {
+    let source = "using System;\n#if !STRONG_NAME\n[assembly: CLSCompliant(true)]\n#endif\n";
+    assert_eq!(rule_diagnostics(source, "SA1516"), ["(2,1)"]);
+
+    let source = r#"using System;
+#if !STRONG_NAME
+[assembly: CLSCompliant(true)]
+#endif
+[module: CLSCompliant(true)]
+class C
+{
+}
+"#;
+    assert_eq!(rule_diagnostics(source, "SA1516"), ["(2,1)", "(6,1)"]);
+}
+
+#[test]
+fn switch_expression_braces_are_not_treated_as_statement_braces() {
+    let source = r#"class C
+{
+    int M(int n) => n switch {
+
+        0 => 1,
+        _ => 2,
+
+    };
+
+    int N(int n)
+    {
+        switch (n) {
+
+            default:
+                return 0;
+
+        }
+    }
+}
+"#;
+    assert_eq!(rule_diagnostics(source, "SA1500"), ["(12,20)"]);
+    assert_eq!(rule_diagnostics(source, "SA1505"), ["(12,20)"]);
+    assert_eq!(rule_diagnostics(source, "SA1508"), ["(17,9)"]);
 }

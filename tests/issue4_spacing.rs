@@ -135,3 +135,46 @@ fn sa1009_matches_stylecop_for_wrapped_closing_parentheses_and_conditional_colon
         ]
     );
 }
+
+#[test]
+fn conditional_colons_require_spaces_on_both_sides() {
+    expect(
+        "ConditionalColons.cs",
+        &[
+            "(4,30): warning SA1009: Closing parenthesis should be followed by a space",
+            "(4,31): warning SA1003: Operator ':' should be preceded by whitespace.",
+            "(4,31): warning SA1024: Colon should be preceded by a space",
+            "(7,30): warning SA1003: Operator ':' should be followed by whitespace.",
+            "(7,30): warning SA1024: Colon should be followed by a space",
+            "(14,46): warning SA1003: Operator ':' should be preceded by whitespace.",
+            "(14,46): warning SA1024: Colon should be preceded by a space",
+            "(20,33): warning SA1003: Operator ':' should be preceded by whitespace.",
+            "(20,33): warning SA1024: Colon should be preceded by a space",
+            "(23,34): warning SA1003: Operator ':' should be followed by whitespace.",
+            "(23,34): warning SA1024: Colon should be followed by a space",
+            "(29,45): warning SA1010: Opening square brackets should not be preceded by a space",
+            "(33,26): warning SA1003: Operator ':' should be preceded by whitespace.",
+            "(33,26): warning SA1024: Colon should be preceded by a space",
+        ],
+    );
+}
+
+#[test]
+fn interpolated_text_punctuation_does_not_count_as_code() {
+    expect(
+        "InterpolationSpacing.cs",
+        &["(9,43): warning SA1018: Nullable type symbol should not be preceded by a space"],
+    );
+}
+
+#[test]
+fn return_and_case_keywords_allow_prefix_operators() {
+    expect(
+        "PrefixOperators.cs",
+        &[
+            "(19,18): warning SA1021: Negative sign should not be followed by a space",
+            "(22,30): warning SA1003: Operator '++' should not be preceded by whitespace.",
+            "(22,30): warning SA1020: Increment symbol '++' should not be preceded by a space",
+        ],
+    );
+}

@@ -43,7 +43,7 @@ fn blank_lines(source: &Source, tokens: &[Token], path: &str, diagnostics: &mut 
         if token.kind == TokenKind::EndOfFile {
             continue;
         }
-        if let Some(span) = multiple_blank_span(&token.leading) {
+        for span in multiple_blank_spans(&token.leading) {
             report(
                 source,
                 path,
@@ -78,41 +78,37 @@ fn leading_blank_span(trivia: &[Trivia]) -> Option<u32> {
     }
 }
 
-fn multiple_blank_span(trivia: &[Trivia]) -> Option<u32> {
-    let mut start: Option<u32> = None;
-    let mut count = 0;
+fn multiple_blank_spans(trivia: &[Trivia]) -> impl Iterator<Item = u32> {
+    let mut start = 0;
+    let mut newlines = 0;
     let mut after_comment = false;
-    for item in trivia {
-        match item.kind {
-            TriviaKind::Whitespace => {}
-            TriviaKind::EndOfLine => {
-                if start.is_none() {
-                    start = Some(item.start);
-                }
-                count += 1;
-            }
-            TriviaKind::SingleLineComment | TriviaKind::MultiLineComment => {
-                start = None;
-                count = 0;
-                after_comment = true;
+    trivia
+        .iter()
+        .map(|item| Some(item.kind))
+        .chain(std::iter::once(None))
+        .enumerate()
+        .filter_map(move |(index, kind)| match kind {
+            Some(TriviaKind::Whitespace) => None,
+            Some(TriviaKind::EndOfLine) => {
+                newlines += 1;
+                None
             }
             _ => {
-                if after_comment && count > 0 {
-                    count -= 1;
-                }
-                if count >= 2 && item.start != 0 {
-                    return start;
-                }
-                start = None;
-                count = 0;
-                after_comment = false;
+                // StyleCop excludes the first newline and advances the span by
+                // one trivia item after a comment.
+                let skip = usize::from(after_comment);
+                let span = (newlines >= 2 + skip)
+                    .then(|| trivia[start + skip].start)
+                    .filter(|span| *span != 0);
+                start = index + 1;
+                newlines = 0;
+                after_comment = matches!(
+                    kind,
+                    Some(TriviaKind::SingleLineComment | TriviaKind::MultiLineComment)
+                );
+                span
             }
-        }
-    }
-    if after_comment && count > 0 {
-        count -= 1;
-    }
-    if count >= 2 { start } else { None }
+        })
 }
 
 fn walk(
@@ -166,6 +162,7 @@ enum Kind {
     AccessorList,
     Accessor,
     Statement,
+    SwitchExpression,
     Catch,
     Lambda,
     Initializer,
@@ -214,6 +211,7 @@ struct Accessor {
 enum MemberKind {
     Field,
     Using,
+    GlobalAttribute,
     Other,
     Invalid,
 }
@@ -281,7 +279,7 @@ impl<'a> Pass<'a> {
                 "Opening braces should not be preceded by blank line",
             );
         }
-        if self.followed_by_blank_gap(index) {
+        if kind != Kind::SwitchExpression && self.followed_by_blank_gap(index) {
             self.emit(
                 self.tokens[index].start,
                 "SA1505",
@@ -486,8 +484,17 @@ impl<'a> Pass<'a> {
         {
             member.saw_parameter_list = true;
         }
-        if at_level
-            && text == ";"
+        let ends_global_attribute = text == "]"
+            && self.bracket == 1
+            && self.paren == 0
+            && self.levels.last().is_some_and(|level| {
+                level.kind == Kind::Root
+                    && level
+                        .member
+                        .as_ref()
+                        .is_some_and(|member| self.is_global_attribute(member.start))
+            });
+        if ((at_level && text == ";") || ends_global_attribute)
             && self
                 .levels
                 .last()
@@ -770,6 +777,8 @@ impl<'a> Pass<'a> {
             MemberKind::Invalid
         } else if is_using {
             MemberKind::Using
+        } else if container == 0 && self.is_global_attribute(start) {
+            MemberKind::GlobalAttribute
         } else if !member.saw_parameter_list
             && member.body.is_none()
             && !member.saw_event
@@ -833,6 +842,13 @@ impl<'a> Pass<'a> {
                 && self
                     .next(start)
                     .is_some_and(|next| self.text(next) == "using"))
+    }
+
+    fn is_global_attribute(&self, start: usize) -> bool {
+        self.text(start) == "["
+            && self.next(start).is_some_and(|target| {
+                matches!(self.text(target), "assembly" | "module") && self.next_is(target, ":")
+            })
     }
 
     fn invalid_member(&self, start: usize, end: usize) -> bool {
@@ -908,7 +924,9 @@ impl<'a> Pass<'a> {
                 if prev.kind == MemberKind::Invalid || next.kind == MemberKind::Invalid {
                     continue;
                 }
-                if prev.kind == MemberKind::Using && next.kind == MemberKind::Using {
+                if prev.kind == next.kind
+                    && matches!(prev.kind, MemberKind::Using | MemberKind::GlobalAttribute)
+                {
                     continue;
                 }
                 if next.has_doc {
@@ -1350,6 +1368,9 @@ impl<'a> Pass<'a> {
         if prev_text == "=>" {
             return Kind::Lambda;
         }
+        if prev_text == "switch" {
+            return Kind::SwitchExpression;
+        }
         if matches!(prev_text, "=" | "," | "new") {
             return Kind::Initializer;
         }
@@ -1562,6 +1583,7 @@ impl<'a> Pass<'a> {
             .trailing
             .iter()
             .chain(self.tokens[start].leading.iter())
+            .flat_map(|trivia| std::iter::once(trivia).chain(&trivia.inner))
         {
             match trivia.kind {
                 TriviaKind::Whitespace => {}
@@ -1756,11 +1778,11 @@ fn is_member_body(kind: Kind) -> bool {
 }
 
 fn sa1500_kind(kind: Kind) -> bool {
-    !matches!(kind, Kind::Other)
+    !matches!(kind, Kind::Other | Kind::SwitchExpression)
 }
 
 fn sa1508_kind(kind: Kind) -> bool {
-    !matches!(kind, Kind::Other | Kind::Lambda)
+    !matches!(kind, Kind::Other | Kind::Lambda | Kind::SwitchExpression)
 }
 
 fn sa1500_next_allowed(text: &str) -> bool {
