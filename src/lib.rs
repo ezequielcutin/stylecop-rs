@@ -1,6 +1,7 @@
 mod config;
 mod layout;
 mod lex;
+mod ordering;
 mod source;
 mod spacing;
 mod whitespace;
@@ -10,12 +11,14 @@ use std::path::{Path, PathBuf};
 use config::{FileSettings, Severity};
 use layout::layout_diagnostics;
 use lex::lex;
+use ordering::ordering_diagnostics;
 use source::Source;
 use spacing::spacing_diagnostics;
 use whitespace::{Diagnostic, whitespace_diagnostics};
 
 const SPACING_CATEGORY: &str = "stylecop.csharp.spacingrules";
 const LAYOUT_CATEGORY: &str = "stylecop.csharp.layoutrules";
+const ORDERING_CATEGORY: &str = "stylecop.csharp.orderingrules";
 
 /// True when `text` is an `.editorconfig` body that contains a StyleCop setting.
 ///
@@ -113,6 +116,7 @@ fn analyze_file(path: &Path, diagnostics: &mut Vec<(Diagnostic, Severity)>) {
         .into_iter()
         .chain(spacing_diagnostics(&source, &tokens, &path_text));
     let layout = layout_diagnostics(&source, &tokens, &path_text, &settings);
+    let ordering = ordering_diagnostics(&source, &tokens, &path_text, &settings.ordering);
     diagnostics.extend(
         spacing
             .map(|diagnostic| (diagnostic, SPACING_CATEGORY))
@@ -120,6 +124,11 @@ fn analyze_file(path: &Path, diagnostics: &mut Vec<(Diagnostic, Severity)>) {
                 layout
                     .into_iter()
                     .map(|diagnostic| (diagnostic, LAYOUT_CATEGORY)),
+            )
+            .chain(
+                ordering
+                    .into_iter()
+                    .map(|diagnostic| (diagnostic, ORDERING_CATEGORY)),
             )
             .filter_map(|(diagnostic, category)| {
                 let severity = settings.severity(diagnostic.code, category)?;

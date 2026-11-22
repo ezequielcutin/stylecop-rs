@@ -1,10 +1,12 @@
-//! Editorconfig severity and indentation for files under analysis.
+//! Editorconfig and StyleCop settings for files under analysis.
 //!
 //! Shared keys such as `indent_size` are read when a rule needs them. They do
 //! not make a StyleCop section by themselves.
 
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
+
+use jsonc_parser::{JsonValue, ParseOptions, parse_to_value};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Level {
@@ -44,6 +46,28 @@ pub enum NewlineAtEnd {
     Omit,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UsingPlacement {
+    Inside,
+    Outside,
+    Preserve,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OrderingSettings {
+    pub system_first: bool,
+    pub placement: UsingPlacement,
+}
+
+impl Default for OrderingSettings {
+    fn default() -> Self {
+        Self {
+            system_first: true,
+            placement: UsingPlacement::Inside,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct FileSettings {
     by_id: HashMap<String, Level>,
@@ -51,6 +75,7 @@ pub struct FileSettings {
     pub use_tabs: bool,
     pub tab_size: usize,
     pub newline_at_end: NewlineAtEnd,
+    pub ordering: OrderingSettings,
 }
 
 impl FileSettings {
@@ -61,6 +86,7 @@ impl FileSettings {
             use_tabs: false,
             tab_size: 4,
             newline_at_end: NewlineAtEnd::Allow,
+            ordering: OrderingSettings::default(),
         };
         let mut source = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
         if source.components().any(|part| part == Component::ParentDir)
@@ -70,6 +96,12 @@ impl FileSettings {
         }
         for (directory, text) in editorconfig_chain(&source) {
             apply_editorconfig(&text, &directory, &source, &mut settings);
+        }
+        if let Some(config) = stylecop_config(&source) {
+            settings.ordering = std::fs::read_to_string(config)
+                .ok()
+                .and_then(|text| ordering_from_json(&text, settings.ordering))
+                .unwrap_or_default();
         }
         settings
     }
@@ -89,6 +121,130 @@ impl FileSettings {
             Level::Error => Some(Severity::Error),
         }
     }
+}
+
+fn stylecop_config(source: &Path) -> Option<PathBuf> {
+    let mut fallback = None;
+    let mut found_project = false;
+    for directory in source.ancestors().skip(1) {
+        let Ok(entries) = std::fs::read_dir(directory) else {
+            continue;
+        };
+        let mut configs = Vec::new();
+        let mut projects = Vec::new();
+        let mut repository_root = false;
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            if fallback.is_none() && is_stylecop_name(name) && entry.path().is_file() {
+                configs.push(entry.path());
+            } else if !found_project && name.ends_with(".csproj") {
+                projects.push(entry.path());
+            } else if name == ".git" {
+                repository_root = true;
+            }
+        }
+        if fallback.is_none() {
+            configs.sort_unstable();
+            // Prefer the conventional spelling if both basenames exist.
+            fallback = configs
+                .iter()
+                .find(|path| {
+                    path.file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| name.eq_ignore_ascii_case("stylecop.json"))
+                })
+                .cloned()
+                .or_else(|| configs.into_iter().next());
+        }
+        if !projects.is_empty() {
+            // The nearest directory with projects owns the source. In a shared
+            // project directory, try project paths in a deterministic order.
+            found_project = true;
+            projects.sort_unstable();
+            if let Some(config) = projects
+                .iter()
+                .find_map(|path| project_stylecop_config(path))
+            {
+                return Some(config);
+            }
+        }
+        if repository_root || (found_project && fallback.is_some()) {
+            break;
+        }
+    }
+    fallback
+}
+
+fn is_stylecop_name(name: &str) -> bool {
+    name.eq_ignore_ascii_case("stylecop.json") || name.eq_ignore_ascii_case(".stylecop.json")
+}
+
+fn project_stylecop_config(project: &Path) -> Option<PathBuf> {
+    let text = std::fs::read_to_string(project).ok()?;
+    let document = roxmltree::Document::parse(&text).ok()?;
+    let root = document.root_element();
+    root.children()
+        .filter(|node| node.tag_name().name() == "ItemGroup")
+        .flat_map(|group| group.children())
+        .filter(|node| node.tag_name().name() == "AdditionalFiles")
+        .filter_map(|node| node.attribute("Include"))
+        .flat_map(|includes| includes.split(';'))
+        // Resolve literal paths relative to the project, accepting MSBuild's
+        // Windows-style separators on Unix.
+        .map(|include| project.with_file_name(include.trim().replace('\\', "/")))
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(is_stylecop_name)
+                && path.is_file()
+        })
+}
+
+fn ordering_from_json(text: &str, mut settings: OrderingSettings) -> Option<OrderingSettings> {
+    // LightJson, used by StyleCop, allows comments and trailing commas.
+    let options = ParseOptions {
+        allow_comments: true,
+        allow_trailing_commas: true,
+        allow_loose_object_property_names: false,
+        allow_missing_commas: false,
+        allow_single_quoted_strings: false,
+        allow_hexadecimal_numbers: false,
+        allow_unary_plus_numbers: false,
+        allow_bare_decimal_point_numbers: false,
+        allow_non_finite_numbers: false,
+        allow_extended_string_escapes: false,
+    };
+    let JsonValue::Object(root) =
+        parse_to_value(text.trim_start_matches('\u{feff}'), &options).ok()??
+    else {
+        return None;
+    };
+    let object = root.get_object("settings")?;
+    let Some(ordering) = object.get("orderingRules") else {
+        return Some(settings);
+    };
+    let JsonValue::Object(ordering) = ordering else {
+        return None;
+    };
+    if let Some(value) = ordering.get("systemUsingDirectivesFirst") {
+        let JsonValue::Boolean(system_first) = value else {
+            return None;
+        };
+        settings.system_first = *system_first;
+    }
+    if let Some(value) = ordering.get("usingDirectivesPlacement") {
+        let JsonValue::String(placement) = value else {
+            return None;
+        };
+        settings.placement = match placement.trim().to_ascii_lowercase().as_str() {
+            "insidenamespace" => UsingPlacement::Inside,
+            "outsidenamespace" => UsingPlacement::Outside,
+            "preserve" => UsingPlacement::Preserve,
+            _ => return None,
+        };
+    }
+    Some(settings)
 }
 
 fn apply_level(update: Level, current: Level) -> Level {
@@ -157,6 +313,14 @@ fn apply_editorconfig(text: &str, directory: &Path, source: &Path, settings: &mu
             if let Ok(size) = value.parse::<usize>() {
                 settings.tab_size = size.max(1);
             }
+        } else if key == "dotnet_sort_system_directives_first" {
+            settings.ordering.system_first = !value.eq_ignore_ascii_case("false");
+        } else if key == "csharp_using_directive_placement" {
+            // The pinned analyzer reads the option only with a notification suffix.
+            settings.ordering.placement = match value.split_once(':') {
+                Some(("outside_namespace", _)) => UsingPlacement::Outside,
+                _ => UsingPlacement::Inside,
+            };
         } else if let Some(id) = diagnostic_id(&key) {
             settings.by_id.insert(id, parse_level(value));
         } else if let Some(category) = category_name(&key) {
@@ -306,4 +470,151 @@ fn glob_bytes(pattern: &[u8], text: &[u8]) -> bool {
         pattern_index += 1;
     }
     pattern_index == pattern.len()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new() -> Self {
+            let stamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let directory = std::env::temp_dir()
+                .join(format!("stylecop-config-{}-{stamp}", std::process::id()));
+            fs::create_dir(&directory).unwrap();
+            let scratch = Self(directory);
+            scratch.write(".git", "");
+            scratch.write(".editorconfig", "root = true\n");
+            scratch
+        }
+
+        fn write(&self, path: &str, contents: &str) {
+            let path = self.0.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, contents).unwrap();
+        }
+
+        fn ordering(&self, source: &str) -> OrderingSettings {
+            FileSettings::for_source(&self.0.join(source)).ordering
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn ordering_uses_pinned_defaults() {
+        let repo = Scratch::new();
+        let settings = repo.ordering("Example.cs");
+        assert!(settings.system_first);
+        assert_eq!(settings.placement, UsingPlacement::Inside);
+    }
+
+    #[test]
+    fn ordering_reads_matching_editorconfig_and_resets_unset_options() {
+        let repo = Scratch::new();
+        repo.write(
+            ".editorconfig",
+            "root = true\n[*.cs]\ndotnet_sort_system_directives_first = FALSE\n\
+             csharp_using_directive_placement = outside_namespace:suggestion\n\
+             [Reset.cs]\ndotnet_sort_system_directives_first = unset\n\
+             csharp_using_directive_placement = outside_namespace\n",
+        );
+
+        let settings = repo.ordering("Example.cs");
+        assert!(!settings.system_first);
+        assert_eq!(settings.placement, UsingPlacement::Outside);
+
+        let settings = repo.ordering("Reset.cs");
+        assert!(settings.system_first);
+        assert_eq!(settings.placement, UsingPlacement::Inside);
+    }
+
+    #[test]
+    fn json_overrides_only_the_ordering_options_it_supplies() {
+        let repo = Scratch::new();
+        repo.write(
+            ".editorconfig",
+            "root = true\n[*.cs]\ndotnet_sort_system_directives_first = false\n\
+             csharp_using_directive_placement = outside_namespace:error\n",
+        );
+        repo.write(
+            "stylecop.json",
+            r#"{
+                // StyleCop allows comments and trailing commas.
+                "settings": { "orderingRules": { "usingDirectivesPlacement": "Preserve", }, },
+            }"#,
+        );
+        let settings = repo.ordering("src/Example.cs");
+        assert!(!settings.system_first);
+        assert_eq!(settings.placement, UsingPlacement::Preserve);
+    }
+
+    #[test]
+    fn json_system_sorting_overrides_editorconfig() {
+        let repo = Scratch::new();
+        repo.write(
+            ".editorconfig",
+            "root = true\n[*.cs]\ndotnet_sort_system_directives_first = true\n\
+             csharp_using_directive_placement = outside_namespace:error\n",
+        );
+        repo.write(
+            "stylecop.json",
+            r#"{"settings":{"orderingRules":{"systemUsingDirectivesFirst":false}}}"#,
+        );
+        let settings = repo.ordering("src/Example.cs");
+        assert!(!settings.system_first);
+        assert_eq!(settings.placement, UsingPlacement::Outside);
+    }
+
+    #[test]
+    fn the_nearest_project_selects_its_additional_settings_file() {
+        let repo = Scratch::new();
+        repo.write("stylecop.json", r#"{"settings":{}}"#);
+        repo.write(
+            "build/.stylecop.json",
+            r#"{"settings":{"orderingRules":{"usingDirectivesPlacement":"outsideNamespace"}}}"#,
+        );
+        repo.write(
+            "src/Outer/Outer.csproj",
+            r#"<Project><ItemGroup>
+                <!-- <AdditionalFiles Include="../../stylecop.json" /> -->
+                <AdditionalFiles Include='..\..\build\.stylecop.json' Link='stylecop.json' />
+            </ItemGroup></Project>"#,
+        );
+        repo.write("src/Outer/Inner/Inner.csproj", "<Project />");
+
+        assert_eq!(
+            repo.ordering("src/Outer/Features/Example.cs").placement,
+            UsingPlacement::Outside
+        );
+        assert_eq!(
+            repo.ordering("src/Outer/Inner/Example.cs").placement,
+            UsingPlacement::Inside
+        );
+    }
+
+    #[test]
+    fn invalid_ordering_values_use_analyzer_defaults() {
+        let repo = Scratch::new();
+        repo.write(
+            ".editorconfig",
+            "root = true\n[*.cs]\ndotnet_sort_system_directives_first = false\n",
+        );
+        repo.write(
+            "stylecop.json",
+            r#"{"settings":{"orderingRules":{"usingDirectivesPlacement":"invalid"}}}"#,
+        );
+        assert!(repo.ordering("Example.cs").system_first);
+    }
 }

@@ -24,13 +24,40 @@ A Rust command that checks the StyleCop rules a syntax tree can decide, and prin
 cargo run -- <path>
 ```
 
-`<path>` is a directory, a source file, or an `.editorconfig`. The command prints whether that file contains a StyleCop setting, then spacing diagnostics SA1000 through SA1028 and layout diagnostics SA1500 through SA1520. Findings use the per-rule and StyleCop category severity settings for each source file. A missing input path produces an error and exits with status 2.
+`<path>` is a directory, a source file, or an `.editorconfig`. The command prints whether that file contains a StyleCop setting, then spacing, layout, and using-directive ordering diagnostics. Findings use the per-rule and StyleCop category severity settings for each source file. A missing input path produces an error and exits with status 2.
 
 A StyleCop setting is a `stylecop.*` key, a `dotnet_diagnostic.SA` severity, or a `dotnet_analyzer_diagnostic.category-StyleCop.*` severity. Those are the keys in StyleCop.Analyzers' configuration doc. Shared editorconfig keys such as `indent_size` do not count.
 
-## Spacing and layout parity
+## Using-directive ordering
 
-Install Python 3, Git, Rust, and [.NET SDK 10.0.115](https://github.com/dotnet/core/blob/main/release-notes/10.0/10.0.15/10.0.115.md).
+The CLI covers all seven StyleCop using-directive ordering rules.
+
+| Rule | Check |
+| --- | --- |
+| SA1200 | Placement inside or outside namespaces |
+| SA1208 | `System` directives before other namespace imports |
+| SA1209 | Alias directives after namespace imports |
+| SA1210 | Alphabetical namespace imports |
+| SA1211 | Alphabetical alias names |
+| SA1216 | Static imports between namespace imports and aliases |
+| SA1217 | Alphabetical static imports |
+
+Use `settings.orderingRules` in `stylecop.json` or `.stylecop.json` to set
+`systemUsingDirectivesFirst` or `usingDirectivesPlacement`. The CLI can find
+literal configuration paths in a nearby project's `AdditionalFiles` items and
+settings files beside or above the source. It also reads
+`dotnet_sort_system_directives_first` and `csharp_using_directive_placement`
+in applicable EditorConfig sections. The pinned analyzer expects a notification
+suffix on placement values such as `outside_namespace:warning`. Explicit JSON
+settings take precedence.
+
+The corpus checks use the pinned analyzer. Known compatibility gaps include
+source-level `#pragma warning` suppression, some Japanese name comparisons,
+and spacing checks inside raw string interpolations.
+
+## Diagnostic parity
+
+Install Python 3.9 or newer, Git, Rust, and [.NET SDK 10.0.115](https://github.com/dotnet/core/blob/main/release-notes/10.0/10.0.15/10.0.115.md).
 The comparison fetches the pinned corpora from GitHub and restores the analyzer from NuGet.
 
 ```sh
@@ -42,7 +69,7 @@ and reports the full diagnostic differences for Autofac and Dapper. Each corpus
 runs even when the other has differences or a failed control. The command
 returns 0 for parity, 1 for diagnostic differences, and 2 for setup or
 control failures.
-Use this command to verify changes to spacing and layout rules.
+Use this command to verify changes to spacing, layout, and using-directive ordering.
 
 ## Autofac parity and benchmark
 
@@ -51,22 +78,22 @@ python3 benchmarks/autofac/compare.py --require-speedup
 ```
 
 The Autofac run checks out Autofac at `dd36d18ada9be8f5403aa2b8bd77dcbe9666ee20`
-in a temporary directory and compares SA1000–SA1028 and SA1500–SA1520 against
-StyleCop.Analyzers.Unstable 1.2.0.556. Both tools analyze the tracked C# files in
+in a temporary directory and compares SA1000–SA1028, SA1500–SA1520, and all seven
+using-directive ordering rules against StyleCop.Analyzers.Unstable 1.2.0.556. Both tools analyze the tracked C# files in
 `src/Autofac` with Autofac's `.editorconfig` and Debug `net10.0` preprocessor
 symbols. The Roslyn runner also loads Autofac's `stylecop.json` and uses warning
 severity for the selected rules, matching the pinned project's ruleset.
 The comparison checks repository-relative paths, line and column, rule IDs,
-severity, and messages, including duplicates. A temporary file with known
-SA1028 and SA1517 violations verifies that both tools report spacing and layout
-findings before the corpus run.
+severity, and messages, including duplicates. A temporary source file verifies
+that both tools detect SA1028, SA1517, and all seven using-directive ordering
+rules before each corpus run.
 
 The median uses five runs after a warmup, with fresh processes for both tools on
 every run. Rust timing covers the release CLI from
 process launch through output. Roslyn timing covers configuration loading, source
 reading and parsing, and running the selected analyzers. It excludes .NET process
 startup, analyzer loading, and report serialization. Checkout, restore, and tool
-builds run before timing. The result measures spacing and layout analysis on
+builds run before timing. The result measures spacing, layout, and using-directive ordering analysis on
 the source corpus. It does not measure Autofac's full build.
 
 Use `--dotnet /path/to/dotnet` if the pinned SDK is installed under a separate

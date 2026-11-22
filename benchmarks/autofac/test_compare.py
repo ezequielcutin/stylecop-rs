@@ -6,7 +6,7 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from compare import benchmark, diagnostic_diff, parse_rust, parse_oracle
+from compare import USING_RULES, benchmark, diagnostic_diff, parse_rust, parse_oracle
 
 
 class ComparisonTests(unittest.TestCase):
@@ -62,8 +62,8 @@ class ComparisonTests(unittest.TestCase):
             if target.is_file():
                 control = files[0]
                 known = [
-                    (control, 1, 1, "SA1517", "warning", "Leading blank line"),
-                    (control, 6, 2, "SA1028", "warning", "Trailing space"),
+                    (control, 1, 1, rule, "warning", "Control finding")
+                    for rule in USING_RULES | {"SA1517", "SA1028"}
                 ]
                 return known, known, 0.01, 0.1
 

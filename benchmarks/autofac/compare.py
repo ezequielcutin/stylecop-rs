@@ -19,6 +19,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 DIAGNOSTIC = re.compile(r"(.+)\(([1-9]\d*),([1-9]\d*)\): (\w+) (SA\d{4}): (.*)")
 SPEED_TARGET = 10
+USING_RULES = {"SA1200", "SA1208", "SA1209", "SA1210", "SA1211", "SA1216", "SA1217"}
 
 
 @dataclass(frozen=True)
@@ -151,15 +152,18 @@ def benchmark_corpus(args, work, corpus, rust, command):
     # Exercise the actual CLI and oracle before accepting an empty corpus result.
     control = corpus.source / "StyleCopBenchmarkControl.cs"
     control_path = root / control
+    control_text = (REPO / "tests/fixtures/UsingOrdering.cs").read_text(encoding="utf-8")
+    control_text = control_text.removesuffix("\n") + " \n"
     with control_path.open("xb") as source:
-        source.write(b"\nnamespace Benchmark;\n\ninternal class Control\n{\n} \n")
+        source.write(control_text.encode("utf-8"))
     try:
         actual, expected, _, _ = analyze(
             command, rust, root, control_path, [control.as_posix()], manifest
         )
-        control_findings = {(control.as_posix(), 1, 1, "SA1517"), (control.as_posix(), 6, 2, "SA1028")}
-        if not control_findings.issubset(item[:4] for item in expected):
-            raise ValueError("Roslyn did not report the known SA1028 and SA1517 control violations")
+        required = USING_RULES | {"SA1517", "SA1028"}
+        missing_rules = required - {item[3] for item in expected if item[0] == control.as_posix()}
+        if missing_rules:
+            raise ValueError(f"Roslyn did not report control rules: {', '.join(sorted(missing_rules))}")
         if report_diff(actual, expected):
             raise ValueError("The positive control produced different diagnostics")
     finally:

@@ -6,6 +6,8 @@
 
 use std::collections::HashSet;
 
+use icu_properties::{CodePointMapData, props::GeneralCategory};
+
 use crate::source::{is_cs_newline, is_cs_whitespace};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -533,6 +535,14 @@ impl<'a> Lexer<'a> {
     fn scan_token_parts(&mut self) -> Vec<Token> {
         let start = self.pos as u32;
         self.mark_content();
+        if self.peek() == Some('$') {
+            let dollars = self.ascii_run(self.pos, b'$');
+            let quotes = self.ascii_run(self.pos + dollars, b'"');
+            if quotes >= 3 {
+                self.scan_raw_interpolation(dollars, quotes);
+                return vec![Token::bare(TokenKind::String, start, self.pos as u32)];
+            }
+        }
         if self.starts_interpolated() {
             return self.scan_interpolated();
         }
@@ -541,7 +551,7 @@ impl<'a> Lexer<'a> {
             return vec![Token::bare(TokenKind::String, start, self.pos as u32)];
         }
         if self.peek() == Some('@') {
-            self.scan_raw_ident();
+            self.scan_identifier();
             return vec![Token::bare(TokenKind::Identifier, start, self.pos as u32)];
         }
         if self.peek() == Some('"') {
@@ -556,8 +566,12 @@ impl<'a> Lexer<'a> {
             self.scan_char();
             return vec![Token::bare(TokenKind::Char, start, self.pos as u32)];
         }
-        if self.peek().is_some_and(is_ident_start) {
-            self.scan_raw_ident();
+        if self.peek().is_some_and(is_ident_start)
+            || (self.peek() == Some('\\')
+                && identifier_escape(&self.text[self.pos..])
+                    .is_some_and(|(ch, _)| is_ident_start(ch)))
+        {
+            self.scan_identifier();
             return vec![Token::bare(TokenKind::Identifier, start, self.pos as u32)];
         }
         if self.peek().is_some_and(|ch| ch.is_ascii_digit()) {
@@ -569,6 +583,33 @@ impl<'a> Lexer<'a> {
             self.bump();
         }
         vec![Token::bare(TokenKind::Other, start, self.pos as u32)]
+    }
+
+    fn scan_identifier(&mut self) {
+        if self.peek() == Some('@') {
+            self.bump();
+        }
+        let mut first = true;
+        while let Some(ch) = self.peek() {
+            if ch == '\\' {
+                let Some((value, width)) = identifier_escape(&self.text[self.pos..]) else {
+                    break;
+                };
+                if !(if first {
+                    is_ident_start(value)
+                } else {
+                    is_ident_continue(value)
+                }) {
+                    break;
+                }
+                self.pos += width;
+            } else if is_ident_continue(ch) {
+                self.bump();
+            } else {
+                break;
+            }
+            first = false;
+        }
     }
 
     fn operator_width(&self) -> usize {
@@ -662,6 +703,88 @@ impl<'a> Lexer<'a> {
             } else {
                 self.bump();
             }
+        }
+    }
+
+    fn ascii_run(&self, start: usize, byte: u8) -> usize {
+        self.bytes[start..]
+            .iter()
+            .take_while(|&&next| next == byte)
+            .count()
+    }
+
+    fn scan_raw_interpolation(&mut self, dollars: usize, quotes: usize) {
+        self.pos += dollars + quotes;
+        while let Some(ch) = self.peek() {
+            match ch {
+                '"' => {
+                    let run = self.ascii_run(self.pos, b'"');
+                    if run >= quotes {
+                        self.pos += quotes;
+                        self.mark_content();
+                        return;
+                    }
+                    self.pos += run;
+                }
+                '{' => {
+                    let run = self.ascii_run(self.pos, b'{');
+                    self.pos += run;
+                    if run >= dollars {
+                        self.scan_raw_interpolation_hole(dollars, quotes);
+                    }
+                }
+                _ => {
+                    self.bump();
+                }
+            }
+        }
+    }
+
+    fn scan_raw_interpolation_hole(&mut self, dollars: usize, quotes: usize) {
+        let mut braces = 0usize;
+        let mut other_delimiters = 0usize;
+        while let Some(ch) = self.peek() {
+            match ch {
+                '}' if braces == 0 && self.ascii_run(self.pos, b'}') >= dollars => {
+                    self.pos += dollars;
+                    return;
+                }
+                '/' if self.starts_line_comment() => {
+                    self.scan_line_comment();
+                    continue;
+                }
+                '/' if self.starts_block_comment() => {
+                    self.scan_block_comment();
+                    continue;
+                }
+                '"' | '\'' | '@' | '$' => {
+                    self.scan_token_parts();
+                    continue;
+                }
+                ':' if self.peek_at(1) == Some(':') => {
+                    self.pos += 2;
+                    continue;
+                }
+                ':' if braces == 0 && other_delimiters == 0 => {
+                    while let Some(ch) = self.peek() {
+                        if ch == '}' && self.ascii_run(self.pos, b'}') >= dollars {
+                            self.pos += dollars;
+                            return;
+                        }
+                        if ch == '"' && self.ascii_run(self.pos, b'"') >= quotes {
+                            return;
+                        }
+                        self.bump();
+                    }
+                    return;
+                }
+                '{' => braces += 1,
+                '}' => braces = braces.saturating_sub(1),
+                '(' | '[' => other_delimiters += 1,
+                ')' | ']' => other_delimiters = other_delimiters.saturating_sub(1),
+                _ => {}
+            }
+            self.bump();
         }
     }
 
@@ -859,11 +982,58 @@ impl<'a> Lexer<'a> {
 }
 
 fn is_ident_start(ch: char) -> bool {
-    ch == '_' || ch.is_alphabetic()
+    if ch.is_ascii() {
+        return ch == '_' || ch.is_ascii_alphabetic();
+    }
+    is_ident_start_category(CodePointMapData::<GeneralCategory>::new().get(ch))
 }
 
 fn is_ident_continue(ch: char) -> bool {
-    ch == '_' || ch.is_alphanumeric()
+    if ch.is_ascii() {
+        return ch == '_' || ch.is_ascii_alphanumeric();
+    }
+    let category = CodePointMapData::<GeneralCategory>::new().get(ch);
+    is_ident_start_category(category)
+        || matches!(
+            category,
+            GeneralCategory::DecimalNumber
+                | GeneralCategory::ConnectorPunctuation
+                | GeneralCategory::NonspacingMark
+                | GeneralCategory::SpacingMark
+                | GeneralCategory::Format
+        )
+}
+
+fn is_ident_start_category(category: GeneralCategory) -> bool {
+    matches!(
+        category,
+        GeneralCategory::UppercaseLetter
+            | GeneralCategory::LowercaseLetter
+            | GeneralCategory::TitlecaseLetter
+            | GeneralCategory::ModifierLetter
+            | GeneralCategory::OtherLetter
+            | GeneralCategory::LetterNumber
+    )
+}
+
+pub(crate) fn is_identifier_format(ch: char) -> bool {
+    !ch.is_ascii() && CodePointMapData::<GeneralCategory>::new().get(ch) == GeneralCategory::Format
+}
+
+pub(crate) fn identifier_escape(text: &str) -> Option<(char, usize)> {
+    let width = if text.starts_with("\\u") {
+        6
+    } else if text.starts_with("\\U") {
+        10
+    } else {
+        return None;
+    };
+    let digits = text.get(2..width)?;
+    if !digits.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    let value = u32::from_str_radix(digits, 16).ok()?;
+    Some((char::from_u32(value)?, width))
 }
 
 fn first_ident(text: &str) -> Option<String> {
