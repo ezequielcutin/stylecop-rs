@@ -12,6 +12,6 @@ fn main() -> ExitCode {
         eprintln!("usage: stylecop-rs <path>");
         return ExitCode::from(2);
     }
-    println!("{}", stylecop_rs::report(Path::new(&path)));
+    print!("{}", stylecop_rs::report(Path::new(&path)));
     ExitCode::SUCCESS
 }
