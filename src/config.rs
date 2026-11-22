@@ -16,12 +16,24 @@ enum Level {
     Error,
 }
 
+/// How SA1518 treats a newline at the end of a file.
+///
+/// `insert_final_newline` in `.editorconfig` selects require or omit. Without
+/// that key StyleCop allows a missing newline and a single trailing newline.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NewlineAtEnd {
+    Allow,
+    Require,
+    Omit,
+}
+
 #[derive(Clone, Debug)]
 pub struct FileSettings {
     by_id: HashMap<String, Level>,
     by_category: HashMap<String, Level>,
     pub use_tabs: bool,
     pub tab_size: usize,
+    pub newline_at_end: NewlineAtEnd,
 }
 
 impl FileSettings {
@@ -31,6 +43,7 @@ impl FileSettings {
             by_category: HashMap::new(),
             use_tabs: false,
             tab_size: 4,
+            newline_at_end: NewlineAtEnd::Allow,
         };
         for config in editorconfig_chain(path) {
             let Ok(text) = std::fs::read_to_string(&config) else {
@@ -116,6 +129,12 @@ fn apply_editorconfig(text: &str, source: &Path, settings: &mut FileSettings) {
         let value = value.trim();
         if key == "indent_style" {
             settings.use_tabs = value.eq_ignore_ascii_case("tab");
+        } else if key == "insert_final_newline" {
+            if value.eq_ignore_ascii_case("true") {
+                settings.newline_at_end = NewlineAtEnd::Require;
+            } else if value.eq_ignore_ascii_case("false") {
+                settings.newline_at_end = NewlineAtEnd::Omit;
+            }
         } else if key == "tab_width" {
             if let Ok(size) = value.parse::<usize>() {
                 settings.tab_size = size.max(1);

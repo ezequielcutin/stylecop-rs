@@ -1,4 +1,5 @@
 mod config;
+mod layout;
 mod lex;
 mod source;
 mod spacing;
@@ -7,6 +8,7 @@ mod whitespace;
 use std::path::{Path, PathBuf};
 
 use config::FileSettings;
+use layout::layout_diagnostics;
 use lex::lex;
 use source::Source;
 use spacing::spacing_diagnostics;
@@ -107,6 +109,7 @@ fn analyze_file(path: &Path, diagnostics: &mut Vec<whitespace::Diagnostic>) {
         &source, &tokens, &path_text, &settings,
     ));
     diagnostics.extend(spacing_diagnostics(&source, &tokens, &path_text, &settings));
+    diagnostics.extend(layout_diagnostics(&source, &tokens, &path_text, &settings));
 }
 
 fn is_generated(path: &Path, text: &str) -> bool {

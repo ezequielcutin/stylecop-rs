@@ -23,7 +23,7 @@ fn trailing_whitespace_reports_sa1028_without_the_sample_diagnostic() {
     assert_eq!(
         text,
         format!(
-            "stylecop-section: absent\n{path}(2,11): warning SA1028: Code should not contain trailing whitespace\n"
+            "stylecop-section: absent\n{path}(1,9): warning SA1500: Braces for multi-line statements should not share line\n{path}(2,11): warning SA1028: Code should not contain trailing whitespace\n"
         )
     );
 
@@ -41,8 +41,12 @@ fn comment_documentation_and_preprocessor_spacing_match_stylecop() {
     let expected = format!(
         "stylecop-section: absent\n\
 {path}(3,11): warning SA1028: Code should not contain trailing whitespace\n\
+{path}(4,5): warning SA1514: Element documentation header should be preceded by blank line\n\
 {path}(5,8): warning SA1004: Documentation line should begin with a space\n\
+{path}(8,14): warning SA1502: Element should not be on a single line\n\
 {path}(8,18): warning SA1005: Single line comment should begin with a space\n\
+{path}(9,1): warning SA1516: Elements should be separated by blank line\n\
+{path}(9,5): warning SA1515: Single-line comment should be preceded by blank line\n\
 {path}(16,3): warning SA1006: Preprocessor keyword 'if' should not be preceded by a space\n"
     );
     assert_eq!(text, expected);
@@ -63,7 +67,7 @@ fn a_tab_outside_strings_comments_and_disabled_text_is_sa1027() {
     assert_eq!(
         text,
         format!(
-            "stylecop-section: absent\n{path}(3,1): warning SA1027: Tabs and spaces should be used correctly\n"
+            "stylecop-section: absent\n{path}(3,1): warning SA1027: Tabs and spaces should be used correctly\n{path}(3,16): warning SA1502: Element should not be on a single line\n{path}(4,1): warning SA1516: Elements should be separated by blank line\n{path}(5,1): warning SA1516: Elements should be separated by blank line\n{path}(9,15): warning SA1502: Element should not be on a single line\n"
         )
     );
     fs::remove_dir_all(&dir).unwrap();
@@ -83,7 +87,7 @@ fn repeated_spaces_are_sa1025_except_after_comma_semicolon_or_at_end_of_line() {
     assert_eq!(
         text,
         format!(
-            "stylecop-section: absent\n{path}(3,10): warning SA1025: Code should not contain multiple whitespace characters in a row\n"
+            "stylecop-section: absent\n{path}(3,10): warning SA1025: Code should not contain multiple whitespace characters in a row\n{path}(4,1): warning SA1516: Elements should be separated by blank line\n{path}(4,27): warning SA1502: Element should not be on a single line\n"
         )
     );
     fs::remove_dir_all(&dir).unwrap();
@@ -100,6 +104,12 @@ fn severity_none_emits_nothing_for_that_code() {
     let file = dir.join("Sample.cs");
     fs::write(&file, "class C {\n    int x;  \n}\n").unwrap();
     let text = stylecop_rs::report(&file);
-    assert_eq!(text, "stylecop-section: present\n");
+    let path = file.display().to_string();
+    assert_eq!(
+        text,
+        format!(
+            "stylecop-section: present\n{path}(1,9): warning SA1500: Braces for multi-line statements should not share line\n"
+        )
+    );
     fs::remove_dir_all(&dir).unwrap();
 }

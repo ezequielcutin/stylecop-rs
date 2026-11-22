@@ -102,19 +102,38 @@ pub fn spacing_diagnostics(
                 attributes.contains(&index),
                 &mut diagnostics,
             );
-        } else if text == "{"
-            && !holes.contains(&index)
-            && !first_in_line(source, token)
-            && !preceded_by_whitespace(source, token)
-        {
-            report(
-                source,
-                path,
-                token.start,
-                "SA1012",
-                "Opening brace should be preceded by a space",
-                &mut diagnostics,
-            );
+        } else if text == "{" && holes.contains(&index) {
+            if followed_by_whitespace(token, next) {
+                report(
+                    source,
+                    path,
+                    token.start,
+                    "SA1012",
+                    "Opening brace should not be followed by a space",
+                    &mut diagnostics,
+                );
+            }
+        } else if text == "{" && !holes.contains(&index) {
+            if !first_in_line(source, token) && !preceded_by_whitespace(source, token) {
+                report(
+                    source,
+                    path,
+                    token.start,
+                    "SA1012",
+                    "Opening brace should be preceded by a space",
+                    &mut diagnostics,
+                );
+            }
+            if !last_in_line(source, token, next) && !followed_by_whitespace(token, next) {
+                report(
+                    source,
+                    path,
+                    token.start,
+                    "SA1012",
+                    "Opening brace should be followed by a space",
+                    &mut diagnostics,
+                );
+            }
         } else if text == "}" && !holes.contains(&index) {
             brace_close_spacing(source, path, token, next, &mut diagnostics);
         } else if text == ":" {
