@@ -28,8 +28,35 @@ cargo run -- <path>
 
 A StyleCop setting is a `stylecop.*` key, a `dotnet_diagnostic.SA` severity, or a `dotnet_analyzer_diagnostic.category-StyleCop.*` severity. Those are the keys in StyleCop.Analyzers' configuration doc. Shared editorconfig keys such as `indent_size` do not count.
 
-## Status
+## Autofac parity and benchmark
 
-The first measurement is on a public Autofac build. Syntax rules were most of StyleCop's own time. Documentation was not almost all of it, so a syntax port is still the first cut. On that build, Sonar and the built-in analyzers were the long part of the wall clock, so a StyleCop-only speedup will not make a build like that feel fast.
+Install Python 3, Git, Rust, and [.NET SDK 10.0.115](https://github.com/dotnet/core/blob/main/release-notes/10.0/10.0.15/10.0.115.md).
+The command fetches the pinned checkout from GitHub and restores the analyzer from NuGet.
 
-No rules are implemented. Stop once a syntax subset exists if it is not at least 10× faster than StyleCop on a real repo, or if the findings diverge.
+```sh
+python3 benchmarks/autofac/compare.py --require-speedup
+```
+
+The command checks out Autofac at `dd36d18ada9be8f5403aa2b8bd77dcbe9666ee20`
+in a temporary directory and compares SA1000–SA1028 and SA1500–SA1520 against
+StyleCop.Analyzers.Unstable 1.2.0.556. Both tools analyze the tracked C# files in
+`src/Autofac` with Autofac's `.editorconfig` and Debug `net10.0` preprocessor
+symbols. The Roslyn runner also loads Autofac's `stylecop.json` and uses warning
+severity for the selected rules, matching the pinned project's ruleset.
+The comparison checks repository-relative paths, line and column, rule IDs,
+severity, and messages, including duplicates. A temporary file with a known
+SA1028 violation verifies that both tools can report a finding before the
+corpus run.
+
+The median uses five runs after a warmup, with fresh processes for both tools on
+every run. Rust timing covers the release CLI from
+process launch through output. Roslyn timing covers configuration loading, source
+reading and parsing, and running the selected analyzers. It excludes .NET process
+startup, analyzer loading, and report serialization. Checkout, restore, and tool
+builds run before timing. The result measures spacing and layout analysis on
+the source corpus. It does not measure Autofac's full build.
+
+Use `--dotnet /path/to/dotnet` if the pinned SDK is installed under a separate
+host. Use `--samples N` to set the sample count. Diagnostic differences always
+fail the command. `--require-speedup` also fails the command when the median
+speedup is below 10×.
