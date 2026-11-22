@@ -1,6 +1,7 @@
 mod config;
 mod lex;
 mod source;
+mod spacing;
 mod whitespace;
 
 use std::path::{Path, PathBuf};
@@ -8,6 +9,7 @@ use std::path::{Path, PathBuf};
 use config::FileSettings;
 use lex::lex;
 use source::Source;
+use spacing::spacing_diagnostics;
 use whitespace::whitespace_diagnostics;
 
 /// True when `text` is an `.editorconfig` body that contains a StyleCop setting.
@@ -100,12 +102,11 @@ fn analyze_file(path: &Path, diagnostics: &mut Vec<whitespace::Diagnostic>) {
     }
     let tokens = lex(&source.text);
     let settings = FileSettings::for_source(path);
+    let path_text = path.display().to_string();
     diagnostics.extend(whitespace_diagnostics(
-        &source,
-        &tokens,
-        &path.display().to_string(),
-        &settings,
+        &source, &tokens, &path_text, &settings,
     ));
+    diagnostics.extend(spacing_diagnostics(&source, &tokens, &path_text, &settings));
 }
 
 fn is_generated(path: &Path, text: &str) -> bool {

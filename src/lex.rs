@@ -564,8 +564,32 @@ impl<'a> Lexer<'a> {
             self.scan_number();
             return vec![Token::bare(TokenKind::Other, start, self.pos as u32)];
         }
-        self.bump();
+        let width = self.operator_width();
+        for _ in 0..width {
+            self.bump();
+        }
         vec![Token::bare(TokenKind::Other, start, self.pos as u32)]
+    }
+
+    fn operator_width(&self) -> usize {
+        match (self.peek(), self.peek_at(1), self.peek_at(2)) {
+            (Some('<'), Some('<'), Some('='))
+            | (Some('>'), Some('>'), Some('='))
+            | (Some('?'), Some('?'), Some('='))
+            | (Some('.'), Some('.'), Some('=')) => 3,
+            (Some('='), Some('>' | '='), _)
+            | (Some('!' | '<' | '>'), Some('='), _)
+            | (Some('&'), Some('&' | '='), _)
+            | (Some('|'), Some('|' | '='), _)
+            | (Some('+'), Some('+' | '='), _)
+            | (Some('-'), Some('-' | '=' | '>'), _)
+            | (Some('*' | '/' | '%' | '^'), Some('='), _)
+            | (Some('?'), Some('?' | '.'), _)
+            | (Some(':'), Some(':'), _)
+            | (Some('.'), Some('.'), _)
+            | (Some('<'), Some('<'), _) => 2,
+            _ => 1,
+        }
     }
 
     fn scan_regular_string(&mut self, stop_at_newline: bool) {

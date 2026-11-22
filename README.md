@@ -24,7 +24,7 @@ A Rust command that checks the StyleCop rules a syntax tree can decide, and prin
 cargo run -- <path>
 ```
 
-`<path>` is a directory, a source file, or an `.editorconfig`. The command prints whether that file contains a StyleCop setting, then whitespace diagnostics: SA1004, SA1005, SA1006, SA1025, SA1027, and SA1028.
+`<path>` is a directory, a source file, or an `.editorconfig`. The command prints whether that file contains a StyleCop setting, then spacing diagnostics SA1000 through SA1028.
 
 A StyleCop setting is a `stylecop.*` key, a `dotnet_diagnostic.SA` severity, or a `dotnet_analyzer_diagnostic.category-StyleCop.*` severity. Those are the keys in StyleCop.Analyzers' configuration doc. Shared editorconfig keys such as `indent_size` do not count.
 
