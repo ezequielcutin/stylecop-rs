@@ -18,10 +18,18 @@ A Rust command that checks the StyleCop rules a syntax tree can decide, and prin
 - Documentation and naming rules that need a compilation. They stay out until the syntax rules match.
 - Formatting. CSharpier already does that.
 
+## Run
+
+```
+cargo run -- <path>
+```
+
+`<path>` is a directory, a source file, or an `.editorconfig`. The command prints whether that file contains a StyleCop setting, then one sample diagnostic. No rules run yet.
+
+A StyleCop setting is a `stylecop.*` key, a `dotnet_diagnostic.SA` severity, or a `dotnet_analyzer_diagnostic.category-StyleCop.*` severity. Those are the keys in StyleCop.Analyzers' configuration doc. Shared editorconfig keys such as `indent_size` do not count.
+
 ## Status
 
-No rules yet. The first task is to measure which SA rules actually cost time, on a public repo that already references StyleCop.Analyzers. Analyzer-summary seconds are cumulative and can exceed the wall-clock build, so the writeup has to keep those separate.
+The first measurement is on a public Autofac build. Syntax rules were most of StyleCop's own time. Documentation was not almost all of it, so a syntax port is still the first cut. On that build, Sonar and the built-in analyzers were the long part of the wall clock, so a StyleCop-only speedup will not make a build like that feel fast.
 
-Stop if that time is almost all symbol-level documentation rules. That is a typechecker, and it is the wrong first cut.
-
-Stop later, once a syntax subset exists, if it is not at least 10× faster than StyleCop on that repo, or if the findings diverge.
+No rules are implemented. Stop once a syntax subset exists if it is not at least 10× faster than StyleCop on a real repo, or if the findings diverge.
