@@ -160,3 +160,27 @@ fn layout_category_severity_none_emits_nothing() {
     );
     assert_eq!(body, "");
 }
+
+#[test]
+fn one_line_catch_blocks_are_statements() {
+    let path = fixture("CatchBlocks.cs");
+    let report = stylecop_rs::report(&path);
+    let shown = path.display().to_string();
+    let findings: Vec<_> = report
+        .lines()
+        .filter(|line| line.contains("warning SA1501:") || line.contains("warning SA1502:"))
+        .map(|line| line.strip_prefix(&shown).unwrap())
+        .collect();
+    assert_eq!(
+        findings,
+        [
+            "(11,15): warning SA1501: Statement should not be on a single line",
+            "(20,15): warning SA1501: Statement should not be on a single line",
+            "(29,56): warning SA1501: Statement should not be on a single line",
+            "(38,43): warning SA1501: Statement should not be on a single line",
+            "(59,28): warning SA1501: Statement should not be on a single line",
+            "(67,27): warning SA1502: Element should not be on a single line",
+            "(75,63): warning SA1501: Statement should not be on a single line",
+        ]
+    );
+}

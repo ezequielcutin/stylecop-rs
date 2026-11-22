@@ -166,6 +166,7 @@ enum Kind {
     AccessorList,
     Accessor,
     Statement,
+    Catch,
     Lambda,
     Initializer,
     Other,
@@ -612,8 +613,9 @@ impl<'a> Pass<'a> {
                 );
             }
         } else if same
-            && (kind == Kind::Statement || kind == Kind::Lambda)
-            && !self.lambda_header_same_line(open)
+            && (kind == Kind::Catch
+                || (matches!(kind, Kind::Statement | Kind::Lambda)
+                    && !self.lambda_header_same_line(open)))
         {
             self.emit(
                 self.tokens[open].start,
@@ -1351,6 +1353,9 @@ impl<'a> Pass<'a> {
         if matches!(prev_text, "=" | "," | "new") {
             return Kind::Initializer;
         }
+        if prev_text == "catch" {
+            return Kind::Catch;
+        }
         if matches!(
             prev_text,
             "try" | "else" | "do" | "finally" | "checked" | "unchecked"
@@ -1438,9 +1443,12 @@ impl<'a> Pass<'a> {
             return Kind::Method;
         };
         let text = self.text(before);
+        if text == "catch" || (text == "when" && self.is_catch_filter(before)) {
+            return Kind::Catch;
+        }
         if matches!(
             text,
-            "if" | "for" | "foreach" | "while" | "switch" | "lock" | "using" | "fixed" | "catch"
+            "if" | "for" | "foreach" | "while" | "switch" | "lock" | "using" | "fixed"
         ) {
             return Kind::Statement;
         }
@@ -1451,6 +1459,19 @@ impl<'a> Pass<'a> {
             return Kind::Initializer;
         }
         Kind::Method
+    }
+
+    fn is_catch_filter(&self, when: usize) -> bool {
+        let Some(before) = self.prev(when) else {
+            return false;
+        };
+        let keyword = if self.text(before) == ")" {
+            self.matching_open_paren(before)
+                .and_then(|declaration| self.prev(declaration))
+        } else {
+            Some(before)
+        };
+        keyword.is_some_and(|keyword| self.text(keyword) == "catch")
     }
 
     fn paren_before(&self, index: usize) -> Option<usize> {
