@@ -72,18 +72,32 @@ pub fn spacing_diagnostics(source: &Source, tokens: &[Token], path: &str) -> Vec
                 "Opening parenthesis should not be followed by a space.",
                 &mut diagnostics,
             );
-        } else if text == ")"
-            && !first_in_line(source, token)
-            && preceded_by_whitespace(source, token)
-        {
-            report(
-                source,
-                path,
-                token.start,
-                "SA1009",
-                "Closing parenthesis should not be preceded by a space",
-                &mut diagnostics,
-            );
+        } else if text == ")" && token.kind != TokenKind::InterpolatedText {
+            if first_in_line(source, token) || preceded_by_whitespace(source, token) {
+                report(
+                    source,
+                    path,
+                    token.start,
+                    "SA1009",
+                    "Closing parenthesis should not be preceded by a space",
+                    &mut diagnostics,
+                );
+            }
+            if let Some(colon) = next
+                && colon.kind != TokenKind::InterpolatedText
+                && source.slice(colon.start, colon.end) == ":"
+                && colon.start == token.end
+                && is_conditional_colon(source, tokens, &generics, index + 1)
+            {
+                report(
+                    source,
+                    path,
+                    token.start,
+                    "SA1009",
+                    "Closing parenthesis should be followed by a space",
+                    &mut diagnostics,
+                );
+            }
         } else if text == "[" || text == "]" {
             bracket_spacing(
                 source,
@@ -793,6 +807,56 @@ fn is_pointer(source: &Source, token: &Token, previous: Option<&Token>) -> bool 
     let prev = source.slice(previous.start, previous.end);
     !preceded_by_whitespace(source, token)
         && (TYPE_KEYWORDS.contains(&prev) || matches!(prev, ">" | "]"))
+}
+
+fn is_conditional_colon(
+    source: &Source,
+    tokens: &[Token],
+    generics: &HashSet<usize>,
+    colon: usize,
+) -> bool {
+    // Walk back to the matching question mark. Skip nested expressions and
+    // pair any intervening conditional colons before considering this one.
+    let mut depth = 0;
+    let mut inner_colons = 0;
+    for index in (0..colon).rev() {
+        let token = &tokens[index];
+        if token.kind == TokenKind::InterpolatedText {
+            continue;
+        }
+        let text = source.slice(token.start, token.end);
+        match text {
+            ")" | "]" | "}" => depth += 1,
+            ">" if generics.contains(&index) => depth += 1,
+            "(" | "[" | "{" if depth == 0 => break,
+            "(" | "[" | "{" => depth -= 1,
+            "<" if generics.contains(&index) && depth > 0 => depth -= 1,
+            _ if depth > 0 => continue,
+            ";" => break,
+            ":" => inner_colons += 1,
+            "?" => {
+                let next = &tokens[index + 1];
+                let next_text = source.slice(next.start, next.end);
+                let starts_arm = matches!(
+                    next_text,
+                    "(" | "[" | "+" | "-" | "++" | "--" | "!" | "~" | "&" | "*" | ".."
+                ) || next_text.chars().next().is_some_and(|ch| {
+                    ch.is_alphanumeric() || matches!(ch, '_' | '@' | '$' | '"' | '\'')
+                });
+                // Skip nullable suffixes such as the one in `as int? == 0`.
+                let conditional_access = token.end == next.start && next_text == "[";
+                if !starts_arm || conditional_access {
+                    continue;
+                }
+                if inner_colons == 0 {
+                    return true;
+                }
+                inner_colons -= 1;
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 fn is_nullable(source: &Source, tokens: &[Token], index: usize) -> bool {

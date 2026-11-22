@@ -110,3 +110,28 @@ fn sa1010_allows_space_before_collection_expressions() {
         )]
     );
 }
+
+#[test]
+fn sa1009_matches_stylecop_for_wrapped_closing_parentheses_and_conditional_colons() {
+    let path = fixture("ClosingParentheses.cs");
+    let report = stylecop_rs::report(&path);
+    let shown = path.display().to_string();
+    let findings: Vec<_> = report
+        .lines()
+        .filter(|line| line.contains("warning SA1009:"))
+        .map(|line| line.strip_prefix(&shown).unwrap())
+        .collect();
+    assert_eq!(
+        findings,
+        [
+            "(9,13): warning SA1009: Closing parenthesis should not be preceded by a space",
+            "(15,9): warning SA1009: Closing parenthesis should not be preceded by a space",
+            "(16,40): warning SA1009: Closing parenthesis should be followed by a space",
+            "(17,56): warning SA1009: Closing parenthesis should be followed by a space",
+            "(17,60): warning SA1009: Closing parenthesis should be followed by a space",
+            "(23,9): warning SA1009: Closing parenthesis should not be preceded by a space",
+            "(28,9): warning SA1009: Closing parenthesis should not be preceded by a space",
+            "(48,9): warning SA1009: Closing parenthesis should not be preceded by a space",
+        ]
+    );
+}
