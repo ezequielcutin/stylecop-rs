@@ -19,7 +19,10 @@ pub fn spacing_diagnostics(source: &Source, tokens: &[Token], path: &str) -> Vec
     let holes = hole_braces(source, tokens);
     for index in 0..tokens.len() {
         let token = &tokens[index];
-        if token.kind == TokenKind::EndOfFile {
+        if matches!(
+            token.kind,
+            TokenKind::EndOfFile | TokenKind::InterpolatedText
+        ) {
             continue;
         }
         let text = source.slice(token.start, token.end);
@@ -72,7 +75,7 @@ pub fn spacing_diagnostics(source: &Source, tokens: &[Token], path: &str) -> Vec
                 "Opening parenthesis should not be followed by a space.",
                 &mut diagnostics,
             );
-        } else if text == ")" && token.kind != TokenKind::InterpolatedText {
+        } else if text == ")" {
             if first_in_line(source, token) || preceded_by_whitespace(source, token) {
                 report(
                     source,
@@ -142,6 +145,8 @@ pub fn spacing_diagnostics(source: &Source, tokens: &[Token], path: &str) -> Vec
             }
         } else if text == "}" && !holes.contains(&index) {
             brace_close_spacing(source, path, token, next, &mut diagnostics);
+        } else if text == ":" && is_conditional_colon(source, tokens, &generics, index) {
+            binary_spacing(source, path, token, text, previous, &mut diagnostics);
         } else if text == ":" {
             colon_spacing(source, path, token, previous, &mut diagnostics);
         }
@@ -566,8 +571,26 @@ fn binary_spacing(
             &format!("Operator '{text}' should be preceded by whitespace."),
             diagnostics,
         );
+        if text == ":" {
+            report(
+                source,
+                path,
+                token.start,
+                "SA1024",
+                "Colon should be preceded by a space",
+                diagnostics,
+            );
+        }
     }
-    if !trailing_is(token, TriviaKind::Whitespace) && !trailing_is(token, TriviaKind::EndOfLine) {
+    // Interpolation holes can represent whitespace as tokens instead of trivia.
+    let followed_by_space = trailing_is(token, TriviaKind::Whitespace)
+        || trailing_is(token, TriviaKind::EndOfLine)
+        || (text == ":"
+            && source.text[token.end as usize..]
+                .chars()
+                .next()
+                .is_some_and(is_dotnet_whitespace));
+    if !followed_by_space {
         report(
             source,
             path,
@@ -576,6 +599,16 @@ fn binary_spacing(
             &format!("Operator '{text}' should be followed by whitespace."),
             diagnostics,
         );
+        if text == ":" {
+            report(
+                source,
+                path,
+                token.start,
+                "SA1024",
+                "Colon should be followed by a space",
+                diagnostics,
+            );
+        }
     }
 }
 
@@ -832,11 +865,22 @@ fn is_conditional_colon(
             "(" | "[" | "{" => depth -= 1,
             "<" if generics.contains(&index) && depth > 0 => depth -= 1,
             _ if depth > 0 => continue,
-            ";" => break,
+            ";" | "case" => break,
             ":" => inner_colons += 1,
             "?" => {
-                let next = &tokens[index + 1];
-                let next_text = source.slice(next.start, next.end);
+                let next = (index + 1..=colon).find(|&next| {
+                    let token = &tokens[next];
+                    let text = source.slice(token.start, token.end);
+                    !text.chars().all(is_dotnet_whitespace)
+                });
+                let Some(next) = next else {
+                    continue;
+                };
+                let next_token = &tokens[next];
+                let next_text = source.slice(next_token.start, next_token.end);
+                if matches!(next_text, "as" | "is" | "switch") {
+                    continue;
+                }
                 let starts_arm = matches!(
                     next_text,
                     "(" | "[" | "+" | "-" | "++" | "--" | "!" | "~" | "&" | "*" | ".."
@@ -844,8 +888,11 @@ fn is_conditional_colon(
                     ch.is_alphanumeric() || matches!(ch, '_' | '@' | '$' | '"' | '\'')
                 });
                 // Skip nullable suffixes such as the one in `as int? == 0`.
-                let conditional_access = token.end == next.start && next_text == "[";
-                if !starts_arm || conditional_access {
+                if !starts_arm
+                    || (next_text == "["
+                        && (token.end == next_token.start
+                            || is_array_type_suffix(source, &tokens[next..=colon])))
+                {
                     continue;
                 }
                 if inner_colons == 0 {
@@ -859,6 +906,32 @@ fn is_conditional_colon(
     false
 }
 
+fn is_array_type_suffix(source: &Source, tokens: &[Token]) -> bool {
+    let mut remaining = tokens.iter().peekable();
+    while remaining
+        .peek()
+        .is_some_and(|token| source.slice(token.start, token.end) == "[")
+    {
+        remaining.next();
+        let Some(first) = remaining.next() else {
+            return false;
+        };
+        match source.slice(first.start, first.end) {
+            "]" => {}
+            "," => return true,
+            _ => return false,
+        }
+    }
+    // A name after the rank specifiers can designate an array in a type pattern.
+    remaining.next().is_some_and(|token| {
+        token.kind == TokenKind::Identifier
+            && !matches!(
+                source.slice(token.start, token.end),
+                "as" | "is" | "switch" | "with"
+            )
+    })
+}
+
 fn is_nullable(source: &Source, tokens: &[Token], index: usize) -> bool {
     let token = &tokens[index];
     if source.slice(token.start, token.end) != "?" {
@@ -870,6 +943,9 @@ fn is_nullable(source: &Source, tokens: &[Token], index: usize) -> bool {
     for later in tokens.iter().skip(index + 1) {
         if later.kind == TokenKind::EndOfFile {
             break;
+        }
+        if later.kind == TokenKind::InterpolatedText {
+            continue;
         }
         let text = source.slice(later.start, later.end);
         match text {
@@ -899,7 +975,8 @@ fn is_expression_end(source: &Source, previous: Option<&Token>) -> bool {
         return false;
     };
     let text = source.slice(previous.start, previous.end);
-    previous.kind == TokenKind::Identifier
+    // The lexer uses Identifier for keywords as well as names.
+    (previous.kind == TokenKind::Identifier && !matches!(text, "return" | "case"))
         || previous.kind == TokenKind::String
         || previous.kind == TokenKind::Char
         || text.chars().next().is_some_and(|ch| ch.is_ascii_digit())

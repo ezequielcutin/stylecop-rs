@@ -28,16 +28,29 @@ cargo run -- <path>
 
 A StyleCop setting is a `stylecop.*` key, a `dotnet_diagnostic.SA` severity, or a `dotnet_analyzer_diagnostic.category-StyleCop.*` severity. Those are the keys in StyleCop.Analyzers' configuration doc. Shared editorconfig keys such as `indent_size` do not count.
 
-## Autofac parity and benchmark
+## Spacing and layout parity
 
 Install Python 3, Git, Rust, and [.NET SDK 10.0.115](https://github.com/dotnet/core/blob/main/release-notes/10.0/10.0.15/10.0.115.md).
-The command fetches the pinned checkout from GitHub and restores the analyzer from NuGet.
+The comparison fetches the pinned corpora from GitHub and restores the analyzer from NuGet.
+
+```sh
+python3 benchmarks/autofac/compare.py --corpus all --parity-only
+```
+
+The command builds both tools once, verifies a positive control on each corpus,
+and reports the full diagnostic differences for Autofac and Dapper. Each corpus
+runs even when the other has differences or a failed control. The command
+returns 0 for parity, 1 for diagnostic differences, and 2 for setup or
+control failures.
+Use this command to verify changes to spacing and layout rules.
+
+## Autofac parity and benchmark
 
 ```sh
 python3 benchmarks/autofac/compare.py --require-speedup
 ```
 
-The command checks out Autofac at `dd36d18ada9be8f5403aa2b8bd77dcbe9666ee20`
+The Autofac run checks out Autofac at `dd36d18ada9be8f5403aa2b8bd77dcbe9666ee20`
 in a temporary directory and compares SA1000–SA1028 and SA1500–SA1520 against
 StyleCop.Analyzers.Unstable 1.2.0.556. Both tools analyze the tracked C# files in
 `src/Autofac` with Autofac's `.editorconfig` and Debug `net10.0` preprocessor
@@ -57,14 +70,13 @@ builds run before timing. The result measures spacing and layout analysis on
 the source corpus. It does not measure Autofac's full build.
 
 Use `--dotnet /path/to/dotnet` if the pinned SDK is installed under a separate
-host. Use `--samples N` to set the sample count. Diagnostic differences always
-fail the command. `--require-speedup` also fails the command when the median
-speedup is below 10×.
+host. Use `--samples N` to set the sample count. Use `--corpus all --require-speedup`
+to check the 10× median speed target on both corpora.
 
 ### Dapper parity check
 
 ```sh
-python3 benchmarks/autofac/compare.py --corpus dapper
+python3 benchmarks/autofac/compare.py --corpus dapper --parity-only
 ```
 
 This compares the 51 tracked C# files in `Dapper/` from Dapper 2.1.66

@@ -130,10 +130,22 @@ def report_diff(rust, oracle):
 
 
 def benchmark(args, work):
-    corpus = CORPORA[args.corpus]
     rust, oracle = build_tools(work, args.dotnet)
-    root, files = checkout(work, corpus)
+    corpora = CORPORA.values() if args.corpus == "all" else [CORPORA[args.corpus]]
     command = [args.dotnet, oracle]
+    status = 0
+    for corpus in corpora:
+        try:
+            result = benchmark_corpus(args, work, corpus, rust, command)
+        except (ValueError, OSError, subprocess.CalledProcessError) as error:
+            print(f"{corpus.name} comparison failed: {error}", file=sys.stderr)
+            result = 2
+        status = max(status, result)
+    return status
+
+
+def benchmark_corpus(args, work, corpus, rust, command):
+    root, files = checkout(work, corpus)
     manifest = work / "sources.txt"
 
     # Exercise the actual CLI and oracle before accepting an empty corpus result.
@@ -156,7 +168,8 @@ def benchmark(args, work):
     print(f"Positive control passed. {corpus.name} {corpus.revision[:12]}, {len(files)} tracked C# files.")
     rust_times = []
     oracle_times = []
-    for sample in range(args.samples + 1):
+    samples = 0 if args.parity_only else args.samples
+    for sample in range(samples + 1):
         actual, expected, rust_time, oracle_time = analyze(
             command, rust, root, root / corpus.source, files, manifest
         )
@@ -168,10 +181,13 @@ def benchmark(args, work):
             rust_times.append(rust_time)
             oracle_times.append(oracle_time)
 
+    print(f"Parity: 0 differences ({len(expected)} findings on each side).")
+    if args.parity_only:
+        return 0
+
     rust_time, oracle_time = median(rust_times), median(oracle_times)
     speedup = oracle_time / rust_time
-    print(f"Parity: 0 differences ({len(expected)} findings on each side).")
-    print(f"Median of {args.samples} runs after one warmup:")
+    print(f"Median of {samples} runs after one warmup:")
     print(f"  Rust release CLI: {rust_time * 1000:.2f} ms")
     print(f"  Roslyn + StyleCop analysis: {oracle_time * 1000:.2f} ms")
     print(f"  Speedup: {speedup:.2f}x (target: {SPEED_TARGET}x)")
@@ -180,11 +196,15 @@ def benchmark(args, work):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--corpus", choices=CORPORA, default="autofac")
+    parser.add_argument("--corpus", choices=[*CORPORA, "all"], default="autofac",
+                        help="pinned source corpus to compare (default: autofac)")
     parser.add_argument("--dotnet", default="dotnet", help="path to the .NET host")
     parser.add_argument("--samples", default=5, type=int, help="number of measured runs")
-    parser.add_argument("--require-speedup", action="store_true",
-                        help=f"fail if the median speedup is below {SPEED_TARGET}x")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--require-speedup", action="store_true",
+                       help=f"fail if the median speedup is below {SPEED_TARGET}x")
+    modes.add_argument("--parity-only", action="store_true",
+                       help="compare diagnostics once per corpus, without timing samples")
     args = parser.parse_args()
     if args.samples < 1:
         parser.error("--samples must be at least 1")
