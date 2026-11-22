@@ -4,7 +4,7 @@
 //! not make a StyleCop section by themselves.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Level {
@@ -14,6 +14,23 @@ enum Level {
     Suggestion,
     Warning,
     Error,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Severity {
+    Info,
+    Warning,
+    Error,
+}
+
+impl Severity {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Info => "info",
+            Self::Warning => "warning",
+            Self::Error => "error",
+        }
+    }
 }
 
 /// How SA1518 treats a newline at the end of a file.
@@ -45,24 +62,32 @@ impl FileSettings {
             tab_size: 4,
             newline_at_end: NewlineAtEnd::Allow,
         };
-        for config in editorconfig_chain(path) {
-            let Ok(text) = std::fs::read_to_string(&config) else {
-                continue;
-            };
-            apply_editorconfig(&text, path, &mut settings);
+        let mut source = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+        if source.components().any(|part| part == Component::ParentDir)
+            && let Ok(resolved) = source.canonicalize()
+        {
+            source = resolved;
+        }
+        for (directory, text) in editorconfig_chain(&source) {
+            apply_editorconfig(&text, &directory, &source, &mut settings);
         }
         settings
     }
 
-    pub fn allows(&self, code: &str, category: &str) -> bool {
+    pub fn severity(&self, code: &str, category: &str) -> Option<Severity> {
         let mut level = Level::Warning;
-        if let Some(category_level) = self.by_category.get(&category.to_ascii_lowercase()) {
+        if let Some(category_level) = self.by_category.get(category) {
             level = apply_level(*category_level, level);
         }
-        if let Some(id_level) = self.by_id.get(&code.to_ascii_uppercase()) {
+        if let Some(id_level) = self.by_id.get(code) {
             level = apply_level(*id_level, level);
         }
-        !matches!(level, Level::None | Level::Silent)
+        match level {
+            Level::None | Level::Silent => None,
+            Level::Suggestion => Some(Severity::Info),
+            Level::Warning | Level::Default => Some(Severity::Warning),
+            Level::Error => Some(Severity::Error),
+        }
     }
 }
 
@@ -74,41 +99,34 @@ fn apply_level(update: Level, current: Level) -> Level {
     }
 }
 
-fn editorconfig_chain(start: &Path) -> Vec<PathBuf> {
-    let mut dir = if start.is_dir() {
-        Some(start)
-    } else {
-        start.parent()
-    };
+fn editorconfig_chain(source: &Path) -> Vec<(PathBuf, String)> {
     let mut found = Vec::new();
-    while let Some(current) = dir {
-        let candidate = current.join(".editorconfig");
-        if candidate.is_file() {
-            let rooted = std::fs::read_to_string(&candidate)
-                .map(|text| text_is_root(&text))
-                .unwrap_or(false);
-            found.push(candidate);
+    for directory in source.ancestors().skip(1) {
+        if let Ok(text) = std::fs::read_to_string(directory.join(".editorconfig")) {
+            let rooted = text_is_root(&text);
+            found.push((directory.to_path_buf(), text));
             if rooted {
                 break;
             }
         }
-        dir = current.parent();
     }
     found.reverse();
     found
 }
 
 fn text_is_root(text: &str) -> bool {
-    text.lines().any(|line| {
-        let line = line.trim();
-        let Some((key, value)) = line.split_once('=') else {
-            return false;
-        };
-        key.trim().eq_ignore_ascii_case("root") && value.trim().eq_ignore_ascii_case("true")
-    })
+    text.lines()
+        .map(str::trim)
+        .take_while(|line| !line.starts_with('['))
+        .any(|line| {
+            let Some((key, value)) = line.split_once('=') else {
+                return false;
+            };
+            key.trim().eq_ignore_ascii_case("root") && value.trim().eq_ignore_ascii_case("true")
+        })
 }
 
-fn apply_editorconfig(text: &str, source: &Path, settings: &mut FileSettings) {
+fn apply_editorconfig(text: &str, directory: &Path, source: &Path, settings: &mut FileSettings) {
     let mut active = false;
     for raw in text.lines() {
         let line = raw.trim();
@@ -116,7 +134,7 @@ fn apply_editorconfig(text: &str, source: &Path, settings: &mut FileSettings) {
             continue;
         }
         if line.starts_with('[') && line.ends_with(']') {
-            active = section_matches(&line[1..line.len() - 1], source);
+            active = section_matches(&line[1..line.len() - 1], directory, source);
             continue;
         }
         if !active {
@@ -179,14 +197,61 @@ fn parse_level(value: &str) -> Level {
     }
 }
 
-fn section_matches(header: &str, source: &Path) -> bool {
-    let name = source
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("");
-    expand_patterns(header)
+fn section_matches(header: &str, directory: &Path, source: &Path) -> bool {
+    let patterns = expand_patterns(header);
+    if !header.contains('/') {
+        let name = source
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+        return patterns
+            .iter()
+            .any(|pattern| glob_bytes(pattern.as_bytes(), name.as_bytes()));
+    }
+    let Ok(relative) = source.strip_prefix(directory) else {
+        return false;
+    };
+    let Some(components) = relative
         .iter()
-        .any(|pattern| glob_name(pattern, name))
+        .map(|part| part.to_str())
+        .collect::<Option<Vec<_>>>()
+    else {
+        return false;
+    };
+    let relative = components.join("/");
+    patterns
+        .iter()
+        .any(|pattern| glob_path(pattern.trim_start_matches('/'), &relative))
+}
+
+fn glob_path(pattern: &str, path: &str) -> bool {
+    let path: Vec<_> = path.chars().collect();
+    let mut pattern = pattern.chars().peekable();
+    // Each entry tracks whether the pattern so far matches that prefix of the path.
+    let mut matches = vec![false; path.len() + 1];
+    matches[0] = true;
+    while let Some(part) = pattern.next() {
+        match part {
+            '*' if pattern.next_if_eq(&'*').is_some() => {
+                for index in 1..matches.len() {
+                    matches[index] |= matches[index - 1];
+                }
+            }
+            '*' => {
+                for (index, character) in path.iter().enumerate() {
+                    matches[index + 1] |= *character != '/' && matches[index];
+                }
+            }
+            literal => {
+                for (index, character) in path.iter().enumerate().rev() {
+                    matches[index + 1] = matches[index]
+                        && (*character == literal || (literal == '?' && *character != '/'));
+                }
+                matches[0] = false;
+            }
+        }
+    }
+    matches[path.len()]
 }
 
 fn expand_patterns(header: &str) -> Vec<String> {
@@ -208,15 +273,6 @@ fn expand_patterns(header: &str) -> Vec<String> {
             .collect();
     }
     vec![header.trim().to_string()]
-}
-
-fn glob_name(pattern: &str, name: &str) -> bool {
-    // A pattern with a slash is relative to the editorconfig directory. The
-    // files we care about use filename globs (`*`, `*.cs`).
-    if pattern.contains('/') || pattern.contains('\\') {
-        return false;
-    }
-    glob_bytes(pattern.as_bytes(), name.as_bytes())
 }
 
 fn glob_bytes(pattern: &[u8], text: &[u8]) -> bool {

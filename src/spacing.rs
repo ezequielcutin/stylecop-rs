@@ -5,19 +5,11 @@
 
 use std::collections::HashSet;
 
-use crate::config::FileSettings;
 use crate::lex::{Token, TokenKind, TriviaKind};
 use crate::source::{Source, is_dotnet_whitespace};
 use crate::whitespace::Diagnostic;
 
-const SPACING: &str = "stylecop.csharp.spacingrules";
-
-pub fn spacing_diagnostics(
-    source: &Source,
-    tokens: &[Token],
-    path: &str,
-    settings: &FileSettings,
-) -> Vec<Diagnostic> {
+pub fn spacing_diagnostics(source: &Source, tokens: &[Token], path: &str) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
     if tokens.is_empty() {
         return diagnostics;
@@ -97,7 +89,7 @@ pub fn spacing_diagnostics(
                 source,
                 path,
                 token,
-                text,
+                previous,
                 next,
                 attributes.contains(&index),
                 &mut diagnostics,
@@ -140,7 +132,6 @@ pub fn spacing_diagnostics(
             colon_spacing(source, path, token, previous, &mut diagnostics);
         }
     }
-    diagnostics.retain(|diagnostic| settings.allows(diagnostic.code, SPACING));
     diagnostics
 }
 
@@ -645,12 +636,20 @@ fn bracket_spacing(
     source: &Source,
     path: &str,
     token: &Token,
-    text: &str,
+    previous: Option<&Token>,
     next: Option<&Token>,
     attribute: bool,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
-    if text == "[" {
+    if source.slice(token.start, token.end) == "[" {
+        // An assignment can be followed by a collection expression. SA1026
+        // handles spacing after new and stackalloc for implicit arrays.
+        let space_allowed = previous.is_some_and(|previous| {
+            matches!(
+                source.slice(previous.start, previous.end),
+                "=" | "??=" | "new" | "stackalloc"
+            )
+        });
         if attribute && followed_by_whitespace(token, next) {
             report(
                 source,
@@ -663,7 +662,7 @@ fn bracket_spacing(
         } else if !attribute
             && !first_in_line(source, token)
             && preceded_by_whitespace(source, token)
-            && next_is_not_implicit_array(source, token)
+            && !space_allowed
         {
             report(
                 source,
@@ -785,11 +784,6 @@ fn ends_with_word(text: &str, word: &str) -> bool {
     rest.chars()
         .next_back()
         .is_none_or(|ch| !ch.is_ascii_alphanumeric() && ch != '_')
-}
-
-fn next_is_not_implicit_array(source: &Source, token: &Token) -> bool {
-    let before = source.text[..token.start as usize].trim_end();
-    !(ends_with_word(before, "new") || ends_with_word(before, "stackalloc"))
 }
 
 fn is_pointer(source: &Source, token: &Token, previous: Option<&Token>) -> bool {

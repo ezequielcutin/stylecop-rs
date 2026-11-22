@@ -93,3 +93,20 @@ fn a_closing_brace_jammed_against_else_is_sa1013() {
         ],
     );
 }
+
+#[test]
+fn sa1010_allows_space_before_collection_expressions() {
+    let path = fixture("CollectionExpressions.cs");
+    let report = stylecop_rs::report(&path);
+    let findings: Vec<_> = report
+        .lines()
+        .filter(|line| line.contains("warning SA1010:"))
+        .collect();
+    assert_eq!(
+        findings,
+        [format!(
+            "{}(8,16): warning SA1010: Opening square brackets should not be preceded by a space",
+            path.display()
+        )]
+    );
+}

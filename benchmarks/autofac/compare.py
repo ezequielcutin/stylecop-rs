@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Compare the release CLI with StyleCop.Analyzers on a pinned Autofac checkout."""
+"""Compare the release CLI with StyleCop.Analyzers on a pinned C# checkout."""
 
 import argparse
 from collections import Counter
+from dataclasses import dataclass
 import json
 import math
 import os
@@ -16,11 +17,28 @@ from time import perf_counter
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
-AUTOFAC = "https://github.com/autofac/Autofac.git"
-REVISION = "dd36d18ada9be8f5403aa2b8bd77dcbe9666ee20"
-SOURCE = Path("src/Autofac")
 DIAGNOSTIC = re.compile(r"(.+)\(([1-9]\d*),([1-9]\d*)\): (\w+) (SA\d{4}): (.*)")
 SPEED_TARGET = 10
+
+
+@dataclass(frozen=True)
+class Corpus:
+    name: str
+    url: str
+    revision: str
+    source: Path
+
+
+CORPORA = {
+    "autofac": Corpus(
+        "Autofac", "https://github.com/autofac/Autofac.git",
+        "dd36d18ada9be8f5403aa2b8bd77dcbe9666ee20", Path("src/Autofac"),
+    ),
+    "dapper": Corpus(
+        "Dapper", "https://github.com/DapperLib/Dapper.git",
+        "bd4f75b512de3e00f2c2631d5309961a1ecfea23", Path("Dapper"),
+    ),
+}
 
 
 def parse_rust(output, root):
@@ -75,22 +93,22 @@ def build_tools(work, dotnet):
     return cargo_target / "release" / executable, artifacts / "bin/Oracle/release/Oracle.dll"
 
 
-def checkout(work):
-    root = work / "autofac"
+def checkout(work, corpus):
+    root = work / corpus.name
     root.mkdir()
     run(["git", "init", "--quiet"], root)
     git_config = ["git", "-c", "core.autocrlf=false"]
-    run([*git_config, "fetch", "--quiet", "--depth=1", AUTOFAC, REVISION], root)
+    run([*git_config, "fetch", "--quiet", "--depth=1", corpus.url, corpus.revision], root)
     run([*git_config, "checkout", "--quiet", "--detach", "FETCH_HEAD"], root)
-    if run(["git", "rev-parse", "HEAD"], root, capture=True).strip() != REVISION:
-        raise ValueError("Autofac checkout did not match the pinned revision")
+    if run(["git", "rev-parse", "HEAD"], root, capture=True).strip() != corpus.revision:
+        raise ValueError(f"{corpus.name} checkout did not match the pinned revision")
 
     tracked = set(run(
-        ["git", "ls-files", "-z", "--", SOURCE / "*.cs"], root, capture=True
+        ["git", "ls-files", "-z", "--", corpus.source / "*.cs"], root, capture=True
     ).strip("\0").split("\0"))
-    files = {file.relative_to(root).as_posix() for file in (root / SOURCE).rglob("*.cs")}
+    files = {file.relative_to(root).as_posix() for file in (root / corpus.source).rglob("*.cs")}
     if not files or tracked != files:
-        raise ValueError("Autofac source directory does not match its tracked C# file list")
+        raise ValueError(f"{corpus.name} source directory does not match its tracked C# file list")
     return root, sorted(files)
 
 
@@ -112,33 +130,35 @@ def report_diff(rust, oracle):
 
 
 def benchmark(args, work):
+    corpus = CORPORA[args.corpus]
     rust, oracle = build_tools(work, args.dotnet)
-    root, files = checkout(work)
+    root, files = checkout(work, corpus)
     command = [args.dotnet, oracle]
     manifest = work / "sources.txt"
 
     # Exercise the actual CLI and oracle before accepting an empty corpus result.
-    control = SOURCE / "StyleCopBenchmarkControl.cs"
+    control = corpus.source / "StyleCopBenchmarkControl.cs"
     control_path = root / control
     with control_path.open("xb") as source:
-        source.write(b"namespace Benchmark;\n\ninternal class Control\n{\n} \n")
+        source.write(b"\nnamespace Benchmark;\n\ninternal class Control\n{\n} \n")
     try:
         actual, expected, _, _ = analyze(
             command, rust, root, control_path, [control.as_posix()], manifest
         )
-        if not any(item[:4] == (control.as_posix(), 5, 2, "SA1028") for item in expected):
-            raise ValueError("Roslyn did not report the known SA1028 control violation")
+        control_findings = {(control.as_posix(), 1, 1, "SA1517"), (control.as_posix(), 6, 2, "SA1028")}
+        if not control_findings.issubset(item[:4] for item in expected):
+            raise ValueError("Roslyn did not report the known SA1028 and SA1517 control violations")
         if report_diff(actual, expected):
             raise ValueError("The positive control produced different diagnostics")
     finally:
         control_path.unlink()
 
-    print(f"Positive control passed. Autofac {REVISION[:12]}, {len(files)} tracked C# files.")
+    print(f"Positive control passed. {corpus.name} {corpus.revision[:12]}, {len(files)} tracked C# files.")
     rust_times = []
     oracle_times = []
     for sample in range(args.samples + 1):
         actual, expected, rust_time, oracle_time = analyze(
-            command, rust, root, root / SOURCE, files, manifest
+            command, rust, root, root / corpus.source, files, manifest
         )
         differences = report_diff(actual, expected)
         if differences:
@@ -160,6 +180,7 @@ def benchmark(args, work):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--corpus", choices=CORPORA, default="autofac")
     parser.add_argument("--dotnet", default="dotnet", help="path to the .NET host")
     parser.add_argument("--samples", default=5, type=int, help="number of measured runs")
     parser.add_argument("--require-speedup", action="store_true",

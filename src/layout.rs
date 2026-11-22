@@ -10,8 +10,6 @@ use crate::lex::{Token, TokenKind, Trivia, TriviaKind, whitespace_only};
 use crate::source::Source;
 use crate::whitespace::Diagnostic;
 
-const LAYOUT: &str = "stylecop.csharp.layoutrules";
-
 pub fn layout_diagnostics(
     source: &Source,
     tokens: &[Token],
@@ -24,7 +22,6 @@ pub fn layout_diagnostics(
     }
     blank_lines(source, tokens, path, &mut diagnostics);
     walk(source, tokens, path, settings, &mut diagnostics);
-    diagnostics.retain(|diagnostic| settings.allows(diagnostic.code, LAYOUT));
     diagnostics
 }
 

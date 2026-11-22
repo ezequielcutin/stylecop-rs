@@ -24,7 +24,7 @@ A Rust command that checks the StyleCop rules a syntax tree can decide, and prin
 cargo run -- <path>
 ```
 
-`<path>` is a directory, a source file, or an `.editorconfig`. The command prints whether that file contains a StyleCop setting, then spacing diagnostics SA1000 through SA1028 and layout diagnostics SA1500 through SA1520.
+`<path>` is a directory, a source file, or an `.editorconfig`. The command prints whether that file contains a StyleCop setting, then spacing diagnostics SA1000 through SA1028 and layout diagnostics SA1500 through SA1520. Findings use the per-rule and StyleCop category severity settings for each source file. A missing input path produces an error and exits with status 2.
 
 A StyleCop setting is a `stylecop.*` key, a `dotnet_diagnostic.SA` severity, or a `dotnet_analyzer_diagnostic.category-StyleCop.*` severity. Those are the keys in StyleCop.Analyzers' configuration doc. Shared editorconfig keys such as `indent_size` do not count.
 
@@ -44,9 +44,9 @@ StyleCop.Analyzers.Unstable 1.2.0.556. Both tools analyze the tracked C# files i
 symbols. The Roslyn runner also loads Autofac's `stylecop.json` and uses warning
 severity for the selected rules, matching the pinned project's ruleset.
 The comparison checks repository-relative paths, line and column, rule IDs,
-severity, and messages, including duplicates. A temporary file with a known
-SA1028 violation verifies that both tools can report a finding before the
-corpus run.
+severity, and messages, including duplicates. A temporary file with known
+SA1028 and SA1517 violations verifies that both tools report spacing and layout
+findings before the corpus run.
 
 The median uses five runs after a warmup, with fresh processes for both tools on
 every run. Rust timing covers the release CLI from
@@ -60,3 +60,15 @@ Use `--dotnet /path/to/dotnet` if the pinned SDK is installed under a separate
 host. Use `--samples N` to set the sample count. Diagnostic differences always
 fail the command. `--require-speedup` also fails the command when the median
 speedup is below 10×.
+
+### Dapper parity check
+
+```sh
+python3 benchmarks/autofac/compare.py --corpus dapper
+```
+
+This compares the 51 tracked C# files in `Dapper/` from Dapper 2.1.66
+(`bd4f75b512de3e00f2c2631d5309961a1ecfea23`). It uses Dapper's root
+`.editorconfig`, the same warning profile as the Autofac comparison, and
+the Rust CLI's Debug `net10.0` preprocessor symbols for both tools. The report
+lists each remaining mismatch and exits with status 1 if it finds any.

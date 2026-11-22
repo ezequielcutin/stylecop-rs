@@ -29,7 +29,7 @@ if (unavailable.Length > 0)
     throw new InvalidOperationException($"StyleCop could not load rules: {string.Join(", ", unavailable)}");
 }
 
-// Match the Debug net10.0 symbols used by the Rust lexer on this corpus.
+// Use the same Debug net10.0 symbols as the Rust lexer for both corpora.
 string[] symbols = [
     "TRACE", "DEBUG", "NET", "NET10_0", "NETCOREAPP",
     "NET5_0_OR_GREATER", "NET6_0_OR_GREATER", "NET7_0_OR_GREATER", "NET8_0_OR_GREATER",
@@ -45,8 +45,9 @@ var timer = Stopwatch.StartNew();
 var configPath = Path.Combine(root, ".editorconfig");
 var config = AnalyzerConfig.Parse(File.ReadAllText(configPath), configPath);
 var configs = AnalyzerConfigSet.Create(ImmutableArray.Create(config));
-var additional = new DiskText(Path.Combine(root, "build", "stylecop.json"));
-var options = new AnalyzerOptions([additional], new ConfigOptionsProvider(configs));
+var styleCopConfig = Path.Combine(root, "build", "stylecop.json");
+ImmutableArray<AdditionalText> additional = File.Exists(styleCopConfig) ? [new DiskText(styleCopConfig)] : [];
+var options = new AnalyzerOptions(additional, new ConfigOptionsProvider(configs));
 
 var trees = sourcePaths.Select(path =>
 {
@@ -56,7 +57,7 @@ var trees = sourcePaths.Select(path =>
 var levels = analyzers.SelectMany(analyzer => analyzer.SupportedDiagnostics)
     .Select(rule => rule.Id).Distinct()
     .ToImmutableDictionary(id => id, id => rules.Contains(id) ? ReportDiagnostic.Warn : ReportDiagnostic.Suppress);
-var compilation = CSharpCompilation.Create("AutofacAnalysis", trees, options:
+var compilation = CSharpCompilation.Create("StyleCopComparison", trees, options:
     new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary,
         specificDiagnosticOptions: levels, nullableContextOptions: NullableContextOptions.Enable));
 var diagnostics = await compilation.WithAnalyzers(analyzers, options).GetAnalyzerDiagnosticsAsync();

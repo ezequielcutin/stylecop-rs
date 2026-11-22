@@ -7,12 +7,15 @@ mod whitespace;
 
 use std::path::{Path, PathBuf};
 
-use config::FileSettings;
+use config::{FileSettings, Severity};
 use layout::layout_diagnostics;
 use lex::lex;
 use source::Source;
 use spacing::spacing_diagnostics;
-use whitespace::whitespace_diagnostics;
+use whitespace::{Diagnostic, whitespace_diagnostics};
+
+const SPACING_CATEGORY: &str = "stylecop.csharp.spacingrules";
+const LAYOUT_CATEGORY: &str = "stylecop.csharp.layoutrules";
 
 /// True when `text` is an `.editorconfig` body that contains a StyleCop setting.
 ///
@@ -36,7 +39,7 @@ pub fn report(path: &Path) -> String {
     let section = if present { "present" } else { "absent" };
     let mut diagnostics = Vec::new();
     collect(path, &mut diagnostics);
-    diagnostics.sort_by(|left, right| {
+    diagnostics.sort_by(|(left, _), (right, _)| {
         (&left.path, left.line, left.column, left.code, &left.message).cmp(&(
             &right.path,
             right.line,
@@ -46,12 +49,13 @@ pub fn report(path: &Path) -> String {
         ))
     });
     let mut out = format!("stylecop-section: {section}\n");
-    for diagnostic in diagnostics {
+    for (diagnostic, severity) in diagnostics {
         out.push_str(&format!(
-            "{}({},{}): warning {}: {}\n",
+            "{}({},{}): {} {}: {}\n",
             diagnostic.path,
             diagnostic.line,
             diagnostic.column,
+            severity.as_str(),
             diagnostic.code,
             diagnostic.message
         ));
@@ -59,7 +63,7 @@ pub fn report(path: &Path) -> String {
     out
 }
 
-fn collect(path: &Path, diagnostics: &mut Vec<whitespace::Diagnostic>) {
+fn collect(path: &Path, diagnostics: &mut Vec<(Diagnostic, Severity)>) {
     if path.is_dir() {
         let mut files = Vec::new();
         walk_cs(path, &mut files);
@@ -95,7 +99,7 @@ fn walk_cs(dir: &Path, files: &mut Vec<PathBuf>) {
     }
 }
 
-fn analyze_file(path: &Path, diagnostics: &mut Vec<whitespace::Diagnostic>) {
+fn analyze_file(path: &Path, diagnostics: &mut Vec<(Diagnostic, Severity)>) {
     let Ok(source) = Source::read(path) else {
         return;
     };
@@ -105,11 +109,23 @@ fn analyze_file(path: &Path, diagnostics: &mut Vec<whitespace::Diagnostic>) {
     let tokens = lex(&source.text);
     let settings = FileSettings::for_source(path);
     let path_text = path.display().to_string();
-    diagnostics.extend(whitespace_diagnostics(
-        &source, &tokens, &path_text, &settings,
-    ));
-    diagnostics.extend(spacing_diagnostics(&source, &tokens, &path_text, &settings));
-    diagnostics.extend(layout_diagnostics(&source, &tokens, &path_text, &settings));
+    let spacing = whitespace_diagnostics(&source, &tokens, &path_text, &settings)
+        .into_iter()
+        .chain(spacing_diagnostics(&source, &tokens, &path_text));
+    let layout = layout_diagnostics(&source, &tokens, &path_text, &settings);
+    diagnostics.extend(
+        spacing
+            .map(|diagnostic| (diagnostic, SPACING_CATEGORY))
+            .chain(
+                layout
+                    .into_iter()
+                    .map(|diagnostic| (diagnostic, LAYOUT_CATEGORY)),
+            )
+            .filter_map(|(diagnostic, category)| {
+                let severity = settings.severity(diagnostic.code, category)?;
+                Some((diagnostic, severity))
+            }),
+    );
 }
 
 fn is_generated(path: &Path, text: &str) -> bool {

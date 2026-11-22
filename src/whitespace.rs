@@ -4,8 +4,6 @@ use crate::config::FileSettings;
 use crate::lex::{Token, TokenKind, Trivia, TriviaKind, flatten_trivia, whitespace_only};
 use crate::source::{Source, is_dotnet_whitespace};
 
-const SPACING: &str = "stylecop.csharp.spacingrules";
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Diagnostic {
     pub path: String,
@@ -31,7 +29,6 @@ pub fn whitespace_diagnostics(
     sa1025(source, tokens, path, &mut diagnostics);
     sa1027(source, tokens, path, settings, &mut diagnostics);
     sa1028(source, tokens, path, &mut diagnostics);
-    diagnostics.retain(|diagnostic| settings.allows(diagnostic.code, SPACING));
     diagnostics
 }
 
