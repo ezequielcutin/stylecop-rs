@@ -763,7 +763,7 @@ impl<'a> Lexer<'a> {
                 let brace = self.pos as u32;
                 self.bump();
                 tokens.push(Token::bare(TokenKind::Other, brace, self.pos as u32));
-                self.scan_interp_hole(tokens);
+                self.scan_interp_hole(tokens, verbatim);
                 text_start = self.pos;
                 continue;
             }
@@ -787,9 +787,20 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn scan_interp_hole(&mut self, tokens: &mut Vec<Token>) {
+    fn scan_interp_hole(&mut self, tokens: &mut Vec<Token>, verbatim: bool) {
         let mut depth = 1;
+        let mut nested = 0usize;
         while !self.eof() && depth > 0 {
+            if self.peek() == Some(':') && self.peek_at(1) == Some(':') {
+                tokens.extend(self.scan_token_parts());
+                continue;
+            }
+            if depth == 1 && nested == 0 && self.peek() == Some(':') {
+                self.scan_interp_format(tokens, verbatim);
+                if self.peek() != Some('}') {
+                    break;
+                }
+            }
             if self.peek() == Some('{') {
                 depth += 1;
                 let start = self.pos as u32;
@@ -812,10 +823,38 @@ impl<'a> Lexer<'a> {
                 tokens.extend(self.scan_token_parts());
                 continue;
             }
+            match self.peek() {
+                Some('(' | '[') => nested += 1,
+                Some(')' | ']') => nested = nested.saturating_sub(1),
+                _ => {}
+            }
             let start = self.pos as u32;
             self.bump();
             tokens.push(Token::bare(TokenKind::Other, start, self.pos as u32));
         }
+    }
+
+    fn scan_interp_format(&mut self, tokens: &mut Vec<Token>, verbatim: bool) {
+        let start = self.pos;
+        while let Some(character) = self.peek() {
+            match character {
+                '}' => break,
+                '"' if verbatim && self.peek_at(1) == Some('"') => {
+                    self.bump();
+                    self.bump();
+                }
+                '"' => break,
+                '\\' if !verbatim => {
+                    self.bump();
+                    self.bump();
+                }
+                _ if !verbatim && is_cs_newline(character) => break,
+                _ => {
+                    self.bump();
+                }
+            }
+        }
+        self.flush_interp_text(tokens, start);
     }
 }
 
