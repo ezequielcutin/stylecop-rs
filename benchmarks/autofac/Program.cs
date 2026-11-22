@@ -14,7 +14,8 @@ CultureInfo.CurrentUICulture = CultureInfo.InvariantCulture;
 var root = args[0];
 var sourcePaths = File.ReadAllLines(args[1]).Select(path => Path.Combine(root, path)).ToArray();
 int[] usingRules = [1200, 1208, 1209, 1210, 1211, 1216, 1217];
-var rules = Enumerable.Range(1000, 29).Concat(usingRules).Concat(Enumerable.Range(1500, 21))
+int[] readabilityRules = [1110, 1111, 1112, 1113, 1114, 1115, 1116, 1117, 1118, 1120, 1137];
+var rules = Enumerable.Range(1000, 29).Concat(usingRules).Concat(readabilityRules).Concat(Enumerable.Range(1500, 21))
     .Select(number => $"SA{number}").ToImmutableHashSet(StringComparer.Ordinal);
 
 var styleCopPath = Path.Combine(AppContext.BaseDirectory, "StyleCop.Analyzers.dll");

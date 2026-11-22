@@ -67,7 +67,7 @@ fn a_tab_outside_strings_comments_and_disabled_text_is_sa1027() {
     assert_eq!(
         text,
         format!(
-            "stylecop-section: absent\n{path}(3,1): warning SA1027: Tabs and spaces should be used correctly\n{path}(3,16): warning SA1502: Element should not be on a single line\n{path}(4,1): warning SA1516: Elements should be separated by blank line\n{path}(5,1): warning SA1516: Elements should be separated by blank line\n{path}(9,15): warning SA1502: Element should not be on a single line\n"
+            "stylecop-section: absent\n{path}(3,1): warning SA1027: Tabs and spaces should be used correctly\n{path}(3,16): warning SA1502: Element should not be on a single line\n{path}(4,1): warning SA1137: Elements should have the same indentation\n{path}(4,1): warning SA1516: Elements should be separated by blank line\n{path}(5,1): warning SA1516: Elements should be separated by blank line\n{path}(9,1): warning SA1137: Elements should have the same indentation\n{path}(9,15): warning SA1502: Element should not be on a single line\n"
         )
     );
     fs::remove_dir_all(&dir).unwrap();

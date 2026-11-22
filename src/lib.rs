@@ -2,6 +2,7 @@ mod config;
 mod layout;
 mod lex;
 mod ordering;
+mod readability;
 mod source;
 mod spacing;
 mod whitespace;
@@ -12,6 +13,7 @@ use config::{FileSettings, Severity};
 use layout::layout_diagnostics;
 use lex::lex;
 use ordering::ordering_diagnostics;
+use readability::readability_diagnostics;
 use source::Source;
 use spacing::spacing_diagnostics;
 use whitespace::{Diagnostic, whitespace_diagnostics};
@@ -19,6 +21,7 @@ use whitespace::{Diagnostic, whitespace_diagnostics};
 const SPACING_CATEGORY: &str = "stylecop.csharp.spacingrules";
 const LAYOUT_CATEGORY: &str = "stylecop.csharp.layoutrules";
 const ORDERING_CATEGORY: &str = "stylecop.csharp.orderingrules";
+const READABILITY_CATEGORY: &str = "stylecop.csharp.readabilityrules";
 
 /// True when `text` is an `.editorconfig` body that contains a StyleCop setting.
 ///
@@ -117,6 +120,7 @@ fn analyze_file(path: &Path, diagnostics: &mut Vec<(Diagnostic, Severity)>) {
         .chain(spacing_diagnostics(&source, &tokens, &path_text));
     let layout = layout_diagnostics(&source, &tokens, &path_text, &settings);
     let ordering = ordering_diagnostics(&source, &tokens, &path_text, &settings.ordering);
+    let readability = readability_diagnostics(&source, &tokens, &path_text);
     diagnostics.extend(
         spacing
             .map(|diagnostic| (diagnostic, SPACING_CATEGORY))
@@ -129,6 +133,11 @@ fn analyze_file(path: &Path, diagnostics: &mut Vec<(Diagnostic, Severity)>) {
                 ordering
                     .into_iter()
                     .map(|diagnostic| (diagnostic, ORDERING_CATEGORY)),
+            )
+            .chain(
+                readability
+                    .into_iter()
+                    .map(|diagnostic| (diagnostic, READABILITY_CATEGORY)),
             )
             .filter_map(|(diagnostic, category)| {
                 let severity = settings.severity(diagnostic.code, category)?;

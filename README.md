@@ -8,7 +8,7 @@ A Rust command that checks the StyleCop rules a syntax tree can decide, and prin
 
 - Reads the repo's `.editorconfig`.
 - Prints diagnostics in StyleCop's shape: file, line, column, SA code, message.
-- Covers layout, spacing, and ordering. Those rules do not need the compiler's symbol table.
+- Covers layout, spacing, ordering, and the readability checks a line walk can decide. Those rules do not need the compiler's symbol table.
 - Diffs every finding against StyleCop.Analyzers on a real repository. A mismatch is a bug.
 
 ## Out of scope
@@ -24,7 +24,7 @@ A Rust command that checks the StyleCop rules a syntax tree can decide, and prin
 cargo run -- <path>
 ```
 
-`<path>` is a directory, a source file, or an `.editorconfig`. The command prints whether that file contains a StyleCop setting, then spacing, layout, and using-directive ordering diagnostics. Findings use the per-rule and StyleCop category severity settings for each source file. A missing input path produces an error and exits with status 2.
+`<path>` is a directory, a source file, or an `.editorconfig`. The command prints whether that file contains a StyleCop setting, then spacing, layout, readability, and using-directive ordering diagnostics. Findings use the per-rule and StyleCop category severity settings for each source file. A missing input path produces an error and exits with status 2.
 
 A StyleCop setting is a `stylecop.*` key, a `dotnet_diagnostic.SA` severity, or a `dotnet_analyzer_diagnostic.category-StyleCop.*` severity. Those are the keys in StyleCop.Analyzers' configuration doc. Shared editorconfig keys such as `indent_size` do not count.
 
@@ -78,8 +78,8 @@ python3 benchmarks/autofac/compare.py --require-speedup
 ```
 
 The Autofac run checks out Autofac at `dd36d18ada9be8f5403aa2b8bd77dcbe9666ee20`
-in a temporary directory and compares SA1000–SA1028, SA1500–SA1520, and all seven
-using-directive ordering rules against StyleCop.Analyzers.Unstable 1.2.0.556. Both tools analyze the tracked C# files in
+in a temporary directory and compares SA1000–SA1028, SA1110–SA1118, SA1120, SA1137,
+SA1500–SA1520, and all seven using-directive ordering rules against StyleCop.Analyzers.Unstable 1.2.0.556. Both tools analyze the tracked C# files in
 `src/Autofac` with Autofac's `.editorconfig` and Debug `net10.0` preprocessor
 symbols. The Roslyn runner also loads Autofac's `stylecop.json` and uses warning
 severity for the selected rules, matching the pinned project's ruleset.
@@ -93,7 +93,7 @@ every run. Rust timing covers the release CLI from
 process launch through output. Roslyn timing covers configuration loading, source
 reading and parsing, and running the selected analyzers. It excludes .NET process
 startup, analyzer loading, and report serialization. Checkout, restore, and tool
-builds run before timing. The result measures spacing, layout, and using-directive ordering analysis on
+builds run before timing. The result measures spacing, layout, readability, and using-directive ordering analysis on
 the source corpus. It does not measure Autofac's full build.
 
 Use `--dotnet /path/to/dotnet` if the pinned SDK is installed under a separate
