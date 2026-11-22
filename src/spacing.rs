@@ -1194,7 +1194,7 @@ fn is_expression_end(source: &Source, previous: Option<&Token>) -> bool {
         )
 }
 
-fn generic_indexes(source: &Source, tokens: &[Token]) -> HashSet<usize> {
+pub(crate) fn generic_indexes(source: &Source, tokens: &[Token]) -> HashSet<usize> {
     let mut generic = HashSet::new();
     let mut index = 0;
     while index < tokens.len() {
