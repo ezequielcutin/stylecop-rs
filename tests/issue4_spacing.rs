@@ -160,6 +160,47 @@ fn conditional_colons_require_spaces_on_both_sides() {
 }
 
 #[test]
+fn conditional_collection_expressions_keep_null_conditional_indexes() {
+    expect(
+        "ConditionalCollections.cs",
+        &[
+            "(5,31): warning SA1003: Operator '?' should be followed by whitespace.",
+            "(5,31): warning SA1003: Operator '?' should be preceded by whitespace.",
+            "(5,34): warning SA1011: Closing square bracket should be followed by a space",
+            "(5,35): warning SA1003: Operator ':' should be preceded by whitespace.",
+            "(5,35): warning SA1024: Colon should be preceded by a space",
+            "(10,28): warning SA1003: Operator '?' should be followed by whitespace.",
+            "(10,28): warning SA1003: Operator '?' should be preceded by whitespace.",
+            "(10,31): warning SA1011: Closing square bracket should be followed by a space",
+            "(10,32): warning SA1003: Operator ':' should be preceded by whitespace.",
+            "(10,32): warning SA1024: Colon should be preceded by a space",
+            "(11,25): warning SA1003: Operator '?' should be followed by whitespace.",
+            "(11,25): warning SA1003: Operator '?' should be preceded by whitespace.",
+            "(12,28): warning SA1003: Operator '?' should be followed by whitespace.",
+            "(12,28): warning SA1003: Operator '?' should be preceded by whitespace.",
+            "(12,39): warning SA1011: Closing square bracket should be followed by a space",
+            "(12,40): warning SA1003: Operator ':' should be preceded by whitespace.",
+            "(12,40): warning SA1024: Colon should be preceded by a space",
+            "(13,29): warning SA1003: Operator '?' should be followed by whitespace.",
+            "(13,29): warning SA1003: Operator '?' should be preceded by whitespace.",
+            "(13,32): warning SA1011: Closing square bracket should be followed by a space",
+            "(13,33): warning SA1003: Operator ':' should be preceded by whitespace.",
+            "(13,33): warning SA1024: Colon should be preceded by a space",
+            "(15,32): warning SA1003: Operator '?' should be followed by whitespace.",
+            "(15,32): warning SA1003: Operator '?' should be preceded by whitespace.",
+            "(15,35): warning SA1011: Closing square bracket should be followed by a space",
+            "(15,36): warning SA1003: Operator ':' should be followed by whitespace.",
+            "(15,36): warning SA1003: Operator ':' should be preceded by whitespace.",
+            "(15,36): warning SA1024: Colon should be followed by a space",
+            "(15,36): warning SA1024: Colon should be preceded by a space",
+            "(16,25): warning SA1003: Operator '?' should be preceded by whitespace.",
+            "(16,37): warning SA1003: Operator ':' should be followed by whitespace.",
+            "(16,37): warning SA1024: Colon should be followed by a space",
+        ],
+    );
+}
+
+#[test]
 fn interpolated_text_punctuation_does_not_count_as_code() {
     expect(
         "InterpolationSpacing.cs",

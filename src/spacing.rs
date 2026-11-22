@@ -17,6 +17,7 @@ pub fn spacing_diagnostics(source: &Source, tokens: &[Token], path: &str) -> Vec
     let generics = generic_indexes(source, tokens);
     let attributes = attribute_indexes(source, tokens);
     let holes = hole_braces(source, tokens);
+    let conditional = conditional_tokens(source, tokens);
     for index in 0..tokens.len() {
         let token = &tokens[index];
         if matches!(
@@ -42,6 +43,8 @@ pub fn spacing_diagnostics(source: &Source, tokens: &[Token], path: &str) -> Vec
             semicolon_spacing(source, path, token, previous, next, &mut diagnostics);
         } else if text == "." || text == "?." || text == "->" {
             member_spacing(source, path, token, text, &mut diagnostics);
+        } else if text == "?" && conditional.questions.contains(&index) {
+            binary_spacing(source, path, token, text, previous, &mut diagnostics);
         } else if text == "?" && is_nullable(source, tokens, index) {
             nullable_spacing(source, path, token, previous, &mut diagnostics);
         } else if generics.contains(&index) && (text == "<" || text == ">") {
@@ -90,7 +93,7 @@ pub fn spacing_diagnostics(source: &Source, tokens: &[Token], path: &str) -> Vec
                 && colon.kind != TokenKind::InterpolatedText
                 && source.slice(colon.start, colon.end) == ":"
                 && colon.start == token.end
-                && is_conditional_colon(source, tokens, &generics, index + 1)
+                && conditional.colons.contains(&(index + 1))
             {
                 report(
                     source,
@@ -108,7 +111,13 @@ pub fn spacing_diagnostics(source: &Source, tokens: &[Token], path: &str) -> Vec
                 token,
                 previous,
                 next,
-                attributes.contains(&index),
+                BracketSpacing {
+                    attribute: attributes.contains(&index),
+                    followed_by_conditional_colon: next.is_some_and(|next| {
+                        source.slice(next.start, next.end) == ":"
+                            && conditional.colons.contains(&(index + 1))
+                    }),
+                },
                 &mut diagnostics,
             );
         } else if text == "{" && holes.contains(&index) {
@@ -145,7 +154,7 @@ pub fn spacing_diagnostics(source: &Source, tokens: &[Token], path: &str) -> Vec
             }
         } else if text == "}" && !holes.contains(&index) {
             brace_close_spacing(source, path, token, next, &mut diagnostics);
-        } else if text == ":" && is_conditional_colon(source, tokens, &generics, index) {
+        } else if text == ":" && conditional.colons.contains(&index) {
             binary_spacing(source, path, token, text, previous, &mut diagnostics);
         } else if text == ":" {
             colon_spacing(source, path, token, previous, &mut diagnostics);
@@ -585,7 +594,7 @@ fn binary_spacing(
     // Interpolation holes can represent whitespace as tokens instead of trivia.
     let followed_by_space = trailing_is(token, TriviaKind::Whitespace)
         || trailing_is(token, TriviaKind::EndOfLine)
-        || (text == ":"
+        || (matches!(text, ":" | "?")
             && source.text[token.end as usize..]
                 .chars()
                 .next()
@@ -679,25 +688,30 @@ fn hole_braces(source: &Source, tokens: &[Token]) -> HashSet<usize> {
     holes
 }
 
+struct BracketSpacing {
+    attribute: bool,
+    followed_by_conditional_colon: bool,
+}
+
 fn bracket_spacing(
     source: &Source,
     path: &str,
     token: &Token,
     previous: Option<&Token>,
     next: Option<&Token>,
-    attribute: bool,
+    spacing: BracketSpacing,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     if source.slice(token.start, token.end) == "[" {
-        // An assignment can be followed by a collection expression. SA1026
-        // handles spacing after new and stackalloc for implicit arrays.
+        // An assignment or conditional arm can be followed by a collection expression.
+        // SA1026 handles spacing after new and stackalloc for implicit arrays.
         let space_allowed = previous.is_some_and(|previous| {
             matches!(
                 source.slice(previous.start, previous.end),
-                "=" | "??=" | "new" | "stackalloc"
+                "=" | "??=" | ":" | "new" | "stackalloc"
             )
         });
-        if attribute && followed_by_whitespace(token, next) {
+        if spacing.attribute && followed_by_whitespace(token, next) {
             report(
                 source,
                 path,
@@ -706,7 +720,7 @@ fn bracket_spacing(
                 "Opening attribute brackets should not be followed by a space",
                 diagnostics,
             );
-        } else if !attribute
+        } else if !spacing.attribute
             && !first_in_line(source, token)
             && preceded_by_whitespace(source, token)
             && !space_allowed
@@ -722,7 +736,7 @@ fn bracket_spacing(
         }
         return;
     }
-    if attribute && preceded_by_whitespace(source, token) {
+    if spacing.attribute && preceded_by_whitespace(source, token) {
         report(
             source,
             path,
@@ -746,7 +760,8 @@ fn bracket_spacing(
     let next_text = next
         .map(|token| source.slice(token.start, token.end))
         .unwrap_or("");
-    if next_text == "{"
+    if matches!(next_text, "{" | ":")
+        && (next_text == "{" || spacing.followed_by_conditional_colon)
         && !followed_by_whitespace(token, next)
         && !last_in_line(source, token, next)
     {
@@ -842,68 +857,261 @@ fn is_pointer(source: &Source, token: &Token, previous: Option<&Token>) -> bool 
         && (TYPE_KEYWORDS.contains(&prev) || matches!(prev, ">" | "]"))
 }
 
-fn is_conditional_colon(
+struct ConditionalTokens {
+    questions: HashSet<usize>,
+    colons: HashSet<usize>,
+}
+
+enum QuestionKind {
+    Hard,
+    // `?[` before a collection expression. Roslyn keeps it as a conditional only
+    // when doing so still leaves a colon for every earlier conditional.
+    Soft,
+}
+
+enum LevelEvent {
+    Question { index: usize, soft: bool },
+    Colon { index: usize },
+}
+
+fn conditional_tokens(source: &Source, tokens: &[Token]) -> ConditionalTokens {
+    let mut found = ConditionalTokens {
+        questions: HashSet::new(),
+        colons: HashSet::new(),
+    };
+    scan_conditional_region(source, tokens, 0, tokens.len(), &mut found);
+    found
+}
+
+fn scan_conditional_region(
     source: &Source,
     tokens: &[Token],
-    generics: &HashSet<usize>,
-    colon: usize,
-) -> bool {
-    // Walk back to the matching question mark. Skip nested expressions and
-    // pair any intervening conditional colons before considering this one.
-    let mut depth = 0;
-    let mut inner_colons = 0;
-    for index in (0..colon).rev() {
+    start: usize,
+    end: usize,
+    found: &mut ConditionalTokens,
+) {
+    let mut events = Vec::new();
+    let mut index = start;
+    while index < end {
         let token = &tokens[index];
-        if token.kind == TokenKind::InterpolatedText {
+        if matches!(
+            token.kind,
+            TokenKind::EndOfFile | TokenKind::InterpolatedText
+        ) {
+            index += 1;
             continue;
         }
         let text = source.slice(token.start, token.end);
         match text {
-            ")" | "]" | "}" => depth += 1,
-            ">" if generics.contains(&index) => depth += 1,
-            "(" | "[" | "{" if depth == 0 => break,
-            "(" | "[" | "{" => depth -= 1,
-            "<" if generics.contains(&index) && depth > 0 => depth -= 1,
-            _ if depth > 0 => continue,
-            ";" | "case" => break,
-            ":" => inner_colons += 1,
-            "?" => {
-                let next = (index + 1..=colon).find(|&next| {
-                    let token = &tokens[next];
-                    let text = source.slice(token.start, token.end);
-                    !text.chars().all(is_dotnet_whitespace)
-                });
-                let Some(next) = next else {
-                    continue;
-                };
-                let next_token = &tokens[next];
-                let next_text = source.slice(next_token.start, next_token.end);
-                if matches!(next_text, "as" | "is" | "switch") {
-                    continue;
-                }
-                let starts_arm = matches!(
-                    next_text,
-                    "(" | "[" | "+" | "-" | "++" | "--" | "!" | "~" | "&" | "*" | ".."
-                ) || next_text.chars().next().is_some_and(|ch| {
-                    ch.is_alphanumeric() || matches!(ch, '_' | '@' | '$' | '"' | '\'')
-                });
-                // Skip nullable suffixes such as the one in `as int? == 0`.
-                if !starts_arm
-                    || (next_text == "["
-                        && (token.end == next_token.start
-                            || is_array_type_suffix(source, &tokens[next..=colon])))
-                {
-                    continue;
-                }
-                if inner_colons == 0 {
-                    return true;
-                }
-                inner_colons -= 1;
+            ";" => {
+                pair_conditional_events(&events, found);
+                events.clear();
+                index += 1;
             }
-            _ => {}
+            "(" | "[" | "{" => {
+                let close = matching_closer(source, tokens, index, end);
+                let interior_end = if close < end { close } else { end };
+                scan_conditional_region(source, tokens, index + 1, interior_end, found);
+                index = if close < end { close + 1 } else { end };
+            }
+            "?" => {
+                match question_kind(source, tokens, index) {
+                    Some(QuestionKind::Hard) => {
+                        events.push(LevelEvent::Question { index, soft: false })
+                    }
+                    Some(QuestionKind::Soft) => {
+                        events.push(LevelEvent::Question { index, soft: true })
+                    }
+                    None => {}
+                }
+                index += 1;
+            }
+            ":" if !is_constraint_colon(source, tokens, index) => {
+                events.push(LevelEvent::Colon { index });
+                index += 1;
+            }
+            _ => index += 1,
         }
     }
+    pair_conditional_events(&events, found);
+}
+
+fn pair_conditional_events(events: &[LevelEvent], found: &mut ConditionalTokens) {
+    let mut dropped = HashSet::new();
+    loop {
+        let mut stack = Vec::new();
+        let mut pairs = Vec::new();
+        for event in events {
+            match *event {
+                LevelEvent::Question { index, .. } if dropped.contains(&index) => {}
+                LevelEvent::Question { index, soft } => stack.push((index, soft)),
+                LevelEvent::Colon { index } => {
+                    if let Some((question, _)) = stack.pop() {
+                        pairs.push((question, index));
+                    }
+                }
+            }
+        }
+        let Some(&(first_open, _)) = stack.first() else {
+            for (question, colon) in pairs {
+                found.questions.insert(question);
+                found.colons.insert(colon);
+            }
+            return;
+        };
+        let Some(&(soft_question, _)) = pairs.iter().find(|(question, _)| {
+            *question > first_open
+                && events.iter().any(|event| {
+                    matches!(
+                        event,
+                        LevelEvent::Question {
+                            index,
+                            soft: true,
+                        } if index == question
+                    )
+                })
+        }) else {
+            for (question, colon) in pairs {
+                found.questions.insert(question);
+                found.colons.insert(colon);
+            }
+            return;
+        };
+        dropped.insert(soft_question);
+    }
+}
+
+fn matching_closer(source: &Source, tokens: &[Token], open: usize, end: usize) -> usize {
+    let open_text = source.slice(tokens[open].start, tokens[open].end);
+    let close_text = match open_text {
+        "(" => ")",
+        "[" => "]",
+        "{" => "}",
+        _ => return end,
+    };
+    let mut depth = 0i32;
+    for (index, token) in tokens.iter().enumerate().take(end).skip(open) {
+        if matches!(
+            token.kind,
+            TokenKind::EndOfFile | TokenKind::InterpolatedText
+        ) {
+            continue;
+        }
+        let text = source.slice(token.start, token.end);
+        if text == open_text {
+            depth += 1;
+        } else if text == close_text {
+            depth -= 1;
+            if depth == 0 {
+                return index;
+            }
+        }
+    }
+    end
+}
+
+fn is_constraint_colon(source: &Source, tokens: &[Token], index: usize) -> bool {
+    // `where T : class` and `, U : struct` belong to a type constraint, not `?:`.
+    let Some((name, _)) = previous_code(source, tokens, index) else {
+        return false;
+    };
+    if tokens[name].kind != TokenKind::Identifier {
+        return false;
+    }
+    let Some((before, before_text)) = previous_code(source, tokens, name) else {
+        return false;
+    };
+    if before_text == "where" {
+        return true;
+    }
+    if before_text != "," {
+        return false;
+    }
+    let mut cursor = before;
+    while let Some((earlier, text)) = previous_code(source, tokens, cursor) {
+        if text == "where" {
+            return true;
+        }
+        if matches!(text, ";" | "{" | "}" | "(") {
+            return false;
+        }
+        cursor = earlier;
+    }
     false
+}
+
+fn previous_code<'a>(
+    source: &'a Source,
+    tokens: &'a [Token],
+    index: usize,
+) -> Option<(usize, &'a str)> {
+    let mut cursor = index;
+    while cursor > 0 {
+        cursor -= 1;
+        let token = &tokens[cursor];
+        if matches!(
+            token.kind,
+            TokenKind::EndOfFile | TokenKind::InterpolatedText
+        ) {
+            continue;
+        }
+        let text = source.slice(token.start, token.end);
+        if !text.is_empty() && !text.chars().all(is_dotnet_whitespace) {
+            return Some((cursor, text));
+        }
+    }
+    None
+}
+
+fn question_kind(source: &Source, tokens: &[Token], index: usize) -> Option<QuestionKind> {
+    if source.slice(tokens[index].start, tokens[index].end) != "?" {
+        return None;
+    }
+    let (next_index, next_text) = next_code(source, tokens, index)?;
+    if matches!(next_text, "as" | "is" | "switch") {
+        return None;
+    }
+    let starts_arm = matches!(
+        next_text,
+        "(" | "[" | "+" | "-" | "++" | "--" | "!" | "~" | "&" | "*" | ".."
+    ) || next_text
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_alphanumeric() || matches!(ch, '_' | '@' | '$' | '"' | '\''));
+    if !starts_arm {
+        return None;
+    }
+    if next_text == "[" && is_array_type_suffix(source, &tokens[next_index..]) {
+        return None;
+    }
+    if next_text == "[" && tokens[index].end == tokens[next_index].start {
+        return Some(QuestionKind::Soft);
+    }
+    Some(QuestionKind::Hard)
+}
+
+fn next_code<'a>(
+    source: &'a Source,
+    tokens: &'a [Token],
+    index: usize,
+) -> Option<(usize, &'a str)> {
+    let mut next = index + 1;
+    while next < tokens.len() {
+        let token = &tokens[next];
+        if matches!(
+            token.kind,
+            TokenKind::EndOfFile | TokenKind::InterpolatedText
+        ) {
+            next += 1;
+            continue;
+        }
+        let text = source.slice(token.start, token.end);
+        if !text.is_empty() && !text.chars().all(is_dotnet_whitespace) {
+            return Some((next, text));
+        }
+        next += 1;
+    }
+    None
 }
 
 fn is_array_type_suffix(source: &Source, tokens: &[Token]) -> bool {
