@@ -82,6 +82,7 @@ fn layout_rules_match_stylecop() {
         "(74,9): warning SA1512: Single-line comments should not be followed by blank line",
         "(74,9): warning SA1515: Single-line comment should be preceded by blank line",
         "(77,9): warning SA1515: Single-line comment should be preceded by blank line",
+        "(81,16): warning SA1201: A property should not follow a method",
         "(83,9): warning SA1504: All accessors should be single-line or multi-line",
         "(84,1): warning SA1516: Elements should be separated by blank line",
         "(92,5): warning SA1509: Opening braces should not be preceded by blank line",
@@ -93,6 +94,7 @@ fn layout_rules_match_stylecop() {
         "(109,17): warning SA1502: Element should not be on a single line",
         "(112,5): warning SA1505: An opening brace should not be followed by a blank line",
         "(117,1): warning SA1507: Code should not contain multiple blank lines in a row",
+        "(119,7): warning SA1402: File may only contain a single type",
         "(124,2): warning SA1518: Code should not contain blank lines at the end of the file",
     ];
     let mut expected = String::from("stylecop-section: absent\n");

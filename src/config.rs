@@ -54,9 +54,21 @@ pub enum UsingPlacement {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OrderingTrait {
+    Kind,
+    Accessibility,
+    Constant,
+    Static,
+    Readonly,
+}
+
+/// Member ordering. An empty `element_order` means the pinned analyzer's default:
+/// kind, accessibility, constant, static, readonly.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OrderingSettings {
     pub system_first: bool,
     pub placement: UsingPlacement,
+    pub element_order: Vec<OrderingTrait>,
 }
 
 impl Default for OrderingSettings {
@@ -64,6 +76,25 @@ impl Default for OrderingSettings {
         Self {
             system_first: true,
             placement: UsingPlacement::Inside,
+            element_order: Vec::new(),
+        }
+    }
+}
+
+const DEFAULT_ELEMENT_ORDER: [OrderingTrait; 5] = [
+    OrderingTrait::Kind,
+    OrderingTrait::Accessibility,
+    OrderingTrait::Constant,
+    OrderingTrait::Static,
+    OrderingTrait::Readonly,
+];
+
+impl OrderingSettings {
+    pub fn traits(&self) -> &[OrderingTrait] {
+        if self.element_order.is_empty() {
+            &DEFAULT_ELEMENT_ORDER
+        } else {
+            &self.element_order
         }
     }
 }
@@ -107,7 +138,14 @@ impl FileSettings {
     }
 
     pub fn severity(&self, code: &str, category: &str) -> Option<Severity> {
-        let mut level = Level::Warning;
+        // SA1412 is off in the pinned analyzer unless a severity setting enables
+        // it. The parity harness turns it on; the checked-in corpora and the
+        // positive control are UTF-8 with a BOM, so the rule stays silent.
+        let mut level = if code == "SA1412" {
+            Level::None
+        } else {
+            Level::Warning
+        };
         if let Some(category_level) = self.by_category.get(category) {
             level = apply_level(*category_level, level);
         }
@@ -243,6 +281,26 @@ fn ordering_from_json(text: &str, mut settings: OrderingSettings) -> Option<Orde
             "preserve" => UsingPlacement::Preserve,
             _ => return None,
         };
+    }
+    if let Some(value) = ordering.get("elementOrder") {
+        let JsonValue::Array(items) = value else {
+            return None;
+        };
+        let mut element_order = Vec::new();
+        for item in items.iter() {
+            let JsonValue::String(name) = item else {
+                return None;
+            };
+            element_order.push(match name.trim().to_ascii_lowercase().as_str() {
+                "kind" => OrderingTrait::Kind,
+                "accessibility" => OrderingTrait::Accessibility,
+                "constant" => OrderingTrait::Constant,
+                "static" => OrderingTrait::Static,
+                "readonly" => OrderingTrait::Readonly,
+                _ => return None,
+            });
+        }
+        settings.element_order = element_order;
     }
     Some(settings)
 }

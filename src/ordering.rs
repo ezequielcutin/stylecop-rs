@@ -1,4 +1,6 @@
 mod directives;
+mod keywords;
+mod members;
 
 use std::sync::LazyLock;
 
@@ -6,6 +8,7 @@ use icu_collator::options::{CaseLevel, CollatorOptions, Strength};
 use icu_collator::{Collator, CollatorBorrowed};
 
 use crate::config::{OrderingSettings, UsingPlacement};
+use crate::declarations::Parsed;
 use crate::lex::Token;
 use crate::source::Source;
 use crate::whitespace::Diagnostic;
@@ -17,10 +20,11 @@ pub fn ordering_diagnostics(
     tokens: &[Token],
     path: &str,
     settings: &OrderingSettings,
+    parsed: &Parsed,
 ) -> Vec<Diagnostic> {
-    let parsed = directives::collect(source, tokens);
+    let usings = directives::collect(source, tokens);
     let mut diagnostics = Vec::new();
-    for (index, scope) in parsed.scopes.iter().enumerate() {
+    for (index, scope) in usings.scopes.iter().enumerate() {
         let mut emit = |directive: &Directive, code, message: String| {
             let offset = directive.start as usize;
             let line = source.line_index(offset);
@@ -36,7 +40,7 @@ pub fn ordering_diagnostics(
         };
 
         let placement = match settings.placement {
-            UsingPlacement::Inside if index == 0 && parsed.root_requires_namespace => {
+            UsingPlacement::Inside if index == 0 && usings.root_requires_namespace => {
                 Some("Using directive should appear within a namespace declaration")
             }
             UsingPlacement::Outside if index != 0 => {
@@ -54,6 +58,8 @@ pub fn ordering_diagnostics(
         alias_order(scope, &mut emit);
         static_order(scope, settings.system_first, &mut emit);
     }
+    diagnostics.extend(members::diagnostics(parsed, source, path, settings));
+    diagnostics.extend(keywords::diagnostics(parsed, source, path));
     diagnostics
 }
 

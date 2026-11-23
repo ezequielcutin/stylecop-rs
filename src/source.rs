@@ -8,6 +8,9 @@ use std::path::Path;
 #[derive(Clone, Debug)]
 pub struct Source {
     pub text: String,
+    /// True when the file bytes begin with a UTF-8 BOM. SA1412 reads this,
+    /// because the pinned analyzer checks the encoding preamble, not the text.
+    pub utf8_bom: bool,
     line_starts: Vec<usize>,
 }
 
@@ -30,14 +33,21 @@ impl Source {
                 i += 1;
             }
         }
-        Self { text, line_starts }
+        Self {
+            text,
+            utf8_bom: false,
+            line_starts,
+        }
     }
 
     pub fn read(path: &Path) -> std::io::Result<Self> {
         let bytes = std::fs::read(path)?;
+        let utf8_bom = bytes.starts_with(&[0xEF, 0xBB, 0xBF]);
         let bytes = strip_bom(&bytes);
         let text = String::from_utf8_lossy(bytes).into_owned();
-        Ok(Self::new(text))
+        let mut source = Self::new(text);
+        source.utf8_bom = utf8_bom;
+        Ok(source)
     }
 
     pub fn line_column(&self, byte: usize) -> (u32, u32) {

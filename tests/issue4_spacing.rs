@@ -70,6 +70,7 @@ fn brackets_braces_parentheses_and_colons_match_stylecop() {
             "(17,1): warning SA1516: Elements should be separated by blank line",
             "(17,13): warning SA1015: Closing generic bracket should not be followed by a space",
             "(17,15): warning SA1019: Member access symbol '.' should not be preceded by a space",
+            "(17,27): warning SA1201: A field should not follow a method",
             "(18,13): warning SA1022: Positive sign should not be followed by a space",
             "(19,1): warning SA1516: Elements should be separated by blank line",
             "(19,27): warning SA1502: Element should not be on a single line",

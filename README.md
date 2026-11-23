@@ -8,7 +8,7 @@ A Rust command that checks the StyleCop rules a syntax tree can decide, and prin
 
 - Reads the repo's `.editorconfig`.
 - Prints diagnostics in StyleCop's shape: file, line, column, SA code, message.
-- Covers layout, spacing, ordering, and the readability checks a line walk can decide. Those rules do not need the compiler's symbol table.
+- Covers layout, spacing, ordering, and the readability and maintainability checks a syntax walk can decide. Those rules do not need the compiler's symbol table.
 - Diffs every finding against StyleCop.Analyzers on a real repository. A mismatch is a bug.
 
 ## Out of scope
@@ -24,13 +24,13 @@ A Rust command that checks the StyleCop rules a syntax tree can decide, and prin
 cargo run -- <path>
 ```
 
-`<path>` is a directory, a source file, or an `.editorconfig`. The command prints whether that file contains a StyleCop setting, then spacing, layout, readability, and using-directive ordering diagnostics. Findings use the per-rule and StyleCop category severity settings for each source file. A missing input path produces an error and exits with status 2.
+`<path>` is a directory, a source file, or an `.editorconfig`. The command prints whether that file contains a StyleCop setting, then spacing, layout, readability, maintainability, and ordering diagnostics. Findings use the per-rule and StyleCop category severity settings for each source file. A missing input path produces an error and exits with status 2.
 
 A StyleCop setting is a `stylecop.*` key, a `dotnet_diagnostic.SA` severity, or a `dotnet_analyzer_diagnostic.category-StyleCop.*` severity. Those are the keys in StyleCop.Analyzers' configuration doc. Shared editorconfig keys such as `indent_size` do not count.
 
 ## Using-directive ordering
 
-The CLI covers all seven StyleCop using-directive ordering rules.
+The CLI covers the seven using-directive rules and the member, keyword, and accessor order rules SA1201–SA1207, SA1212–SA1214. Member order reads `settings.orderingRules.elementOrder`. The default is kind, accessibility, constant, static, then readonly. SA1412 stays off unless a severity setting enables it, matching the pinned analyzer.
 
 | Rule | Check |
 | --- | --- |
@@ -69,7 +69,7 @@ and reports the full diagnostic differences for Autofac and Dapper. Each corpus
 runs even when the other has differences or a failed control. The command
 returns 0 for parity, 1 for diagnostic differences, and 2 for setup or
 control failures.
-Use this command to verify changes to spacing, layout, and using-directive ordering.
+Use this command to verify changes to spacing, layout, ordering, and the syntax rules.
 
 ## Autofac parity and benchmark
 
@@ -78,8 +78,9 @@ python3 benchmarks/autofac/compare.py --require-speedup
 ```
 
 The Autofac run checks out Autofac at `dd36d18ada9be8f5403aa2b8bd77dcbe9666ee20`
-in a temporary directory and compares SA1000–SA1028, SA1110–SA1118, SA1120, SA1137,
-SA1500–SA1520, and all seven using-directive ordering rules against StyleCop.Analyzers.Unstable 1.2.0.556. Both tools analyze the tracked C# files in
+in a temporary directory and compares SA1000–SA1028, SA1106–SA1108, SA1110–SA1119, SA1120,
+SA1122–SA1124, SA1127, SA1128, SA1132–SA1134, SA1136, SA1137, SA1200–SA1214, SA1216, SA1217,
+SA1402, SA1403, SA1407, SA1408, SA1411–SA1413, and SA1500–SA1520 against StyleCop.Analyzers.Unstable 1.2.0.556. Both tools analyze the tracked C# files in
 `src/Autofac` with Autofac's `.editorconfig` and Debug `net10.0` preprocessor
 symbols. The Roslyn runner also loads Autofac's `stylecop.json` and uses warning
 severity for the selected rules, matching the pinned project's ruleset.
@@ -93,7 +94,7 @@ every run. Rust timing covers the release CLI from
 process launch through output. Roslyn timing covers configuration loading, source
 reading and parsing, and running the selected analyzers. It excludes .NET process
 startup, analyzer loading, and report serialization. Checkout, restore, and tool
-builds run before timing. The result measures spacing, layout, readability, and using-directive ordering analysis on
+builds run before timing. The result measures spacing, layout, readability, maintainability, and ordering analysis on
 the source corpus. It does not measure Autofac's full build.
 
 Use `--dotnet /path/to/dotnet` if the pinned SDK is installed under a separate

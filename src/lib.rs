@@ -1,8 +1,10 @@
 mod config;
+mod declarations;
 mod layout;
 mod lex;
 mod ordering;
 mod readability;
+mod shape;
 mod source;
 mod spacing;
 mod whitespace;
@@ -10,10 +12,12 @@ mod whitespace;
 use std::path::{Path, PathBuf};
 
 use config::{FileSettings, Severity};
+use declarations::parse as parse_declarations;
 use layout::layout_diagnostics;
 use lex::lex;
 use ordering::ordering_diagnostics;
 use readability::readability_diagnostics;
+use shape::shape_diagnostics;
 use source::Source;
 use spacing::spacing_diagnostics;
 use whitespace::{Diagnostic, whitespace_diagnostics};
@@ -119,8 +123,10 @@ fn analyze_file(path: &Path, diagnostics: &mut Vec<(Diagnostic, Severity)>) {
         .into_iter()
         .chain(spacing_diagnostics(&source, &tokens, &path_text));
     let layout = layout_diagnostics(&source, &tokens, &path_text, &settings);
-    let ordering = ordering_diagnostics(&source, &tokens, &path_text, &settings.ordering);
+    let parsed = parse_declarations(&source, &tokens);
+    let ordering = ordering_diagnostics(&source, &tokens, &path_text, &settings.ordering, &parsed);
     let readability = readability_diagnostics(&source, &tokens, &path_text);
+    let shape = shape_diagnostics(&source, &tokens, &path_text, &parsed, source.utf8_bom);
     diagnostics.extend(
         spacing
             .map(|diagnostic| (diagnostic, SPACING_CATEGORY))
@@ -139,6 +145,7 @@ fn analyze_file(path: &Path, diagnostics: &mut Vec<(Diagnostic, Severity)>) {
                     .into_iter()
                     .map(|diagnostic| (diagnostic, READABILITY_CATEGORY)),
             )
+            .chain(shape)
             .filter_map(|(diagnostic, category)| {
                 let severity = settings.severity(diagnostic.code, category)?;
                 Some((diagnostic, severity))
