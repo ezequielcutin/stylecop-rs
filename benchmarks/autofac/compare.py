@@ -155,7 +155,8 @@ def benchmark_corpus(args, work, corpus, rust, command):
     control_text = (REPO / "tests/fixtures/UsingOrdering.cs").read_text(encoding="utf-8")
     control_text = control_text.removesuffix("\n") + " \n"
     with control_path.open("xb") as source:
-        source.write(control_text.encode("utf-8"))
+        # The harness enables SA1412. A BOM keeps that rule silent on the control.
+        source.write(b"\xef\xbb\xbf" + control_text.encode("utf-8"))
     try:
         actual, expected, _, _ = analyze(
             command, rust, root, control_path, [control.as_posix()], manifest
